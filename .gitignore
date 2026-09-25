@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/
+*.log
+.DS_Store
+test/.tmp*/
+TEMP_DEMO_LINK.txt
+*.tmp
+db.lock
+.dev-token-key
+demo/dist/
+test/last-e2e*.json

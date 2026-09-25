@@ -1,0 +1,24 @@
+{
+  "name": "lock-and-deploy-bank",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Lock & Deploy savings vault prototype. SANDBOX ONLY: mock provider (default) or Plaid Sandbox. Real money is hard-disabled. Includes an automatic savings engine, Hard Lock vault, Roll Over & Relock, and an approval-gated bot API.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/*.test.js",
+    "tick": "node scripts/tick.js",
+    "reset-passcode": "node scripts/reset-passcode.js",
+    "test:e2e": "python3 test/e2e_mobile.py",
+    "check:plaid": "node scripts/check-plaid.js",
+    "bot": "node bot-cli.js"
+  },
+  "dependencies": {
+    "plaid": "^47.0.0"
+  },
+  "license": "UNLICENSED"
+}

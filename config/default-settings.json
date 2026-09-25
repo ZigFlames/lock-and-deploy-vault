@@ -1,0 +1,50 @@
+{
+  "goal": {
+    "name": "Mattress",
+    "targetCents": 300000,
+    "lockDays": 365,
+    "unlockRule": "goal",
+    "milestonesCents": [150000]
+  },
+  "hardLock": {
+    "defaultOn": true
+  },
+  "hardship": {
+    "coolingOffDaysDefault": 30,
+    "minCoolingOffDays": 7
+  },
+  "contribution": {
+    "amountCents": 25000,
+    "frequency": "benefit",
+    "benefitType": "ssi",
+    "offsetDays": 1
+  },
+  "safety": {
+    "bufferCents": 10000,
+    "onInsufficientFunds": "defer",
+    "deferMaxBusinessDays": 3,
+    "requireBalanceCheck": true,
+    "pauseAfterReturns": 2
+  },
+  "unlock": {
+    "codeExpiryDays": 30,
+    "maxAttempts": 5
+  },
+  "rollover": {
+    "defaultWithdrawCents": 100000,
+    "defaultNewTargetCents": 400000,
+    "fullWithdrawal": "close"
+  },
+  "notifications": {
+    "console": true,
+    "inApp": true,
+    "webhook": false
+  },
+  "bot": {
+    "rateLimitPerMinute": 30,
+    "approvalExpiryDays": 7
+  },
+  "mock": {
+    "fundingBalanceCents": 150000
+  }
+}

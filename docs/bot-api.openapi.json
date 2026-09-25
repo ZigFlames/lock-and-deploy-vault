@@ -1,0 +1,597 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Lock & Deploy Bot API",
+    "version": "1.0.0-sandbox",
+    "description": "API for an AI assistant that monitors and manages the Lock & Deploy savings vault (SANDBOX ONLY).\n\n* Auth: `Authorization: Bearer ldbk_<id>.<secret>` (created by the user in the app, shown once, stored hashed, revocable, scoped).\n* Every call, including refused ones, is logged to the in-app Bot activity log and the hash-chained audit log.\n* Rate limit: per key, `settings.bot.rateLimitPerMinute` (default 30/min); 10 failed auths per minute per IP.\n* Direct actions: read, and pause future deposits. Sensitive actions become pending approvals (HTTP 202) that execute only after the user approves in the app, with the unlock code for anything that withdraws.\n* Never available to a bot: bank credentials or provider tokens, unlocking or bypassing the Hard Lock, hardship release, loosening a locked goal, emergency controls, switching to production, deleting or editing audit entries or transactions. There are no DELETE/PUT/PATCH operations (405)."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:5180",
+      "description": "Local (loopback only)"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "botKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "ldbk_<16 hex id>.<43 char secret>"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "Approval": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "cancelled",
+              "failed"
+            ]
+          },
+          "requiresUnlockCode": {
+            "type": "boolean"
+          },
+          "expiresOn": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "GoalProposal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "targetCents": {
+            "type": "integer",
+            "description": "US cents"
+          },
+          "releaseDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "milestonesCents": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "US cents"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "description": "While the goal is locked, only raises and later release dates are accepted (403 lock_loosening_blocked otherwise). hardLock/hardship/unlockRule are user-only (403)."
+      },
+      "RolloverPrepare": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "partial",
+              "full",
+              "raise"
+            ]
+          },
+          "withdrawCents": {
+            "type": "integer",
+            "description": "US cents"
+          },
+          "newTargetCents": {
+            "type": "integer",
+            "description": "US cents"
+          },
+          "milestonesCents": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "US cents"
+            }
+          },
+          "fullAction": {
+            "type": "string",
+            "enum": [
+              "close",
+              "restart"
+            ]
+          }
+        },
+        "example": {
+          "mode": "partial",
+          "withdrawCents": 100000,
+          "newTargetCents": 400000
+        }
+      },
+      "Request": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "resume_schedule",
+              "schedule_change",
+              "change_funding_account",
+              "revoke_authorization",
+              "grant_authorization",
+              "settings_change",
+              "withdrawal"
+            ]
+          },
+          "payload": {
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "description": "Forbidden types return 403 forbidden_for_bot: unlock, early_unlock, bypass_lock, hardship_release, disable_hard_lock, lower_goal, switch_production, enable_real_money, disable_emergency, disable_emergency_stop, delete_audit, edit_audit, hide_transaction, delete_transaction, read_tokens, read_credentials, create_bot_key, raise_rate_limit_self."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing, invalid or revoked bot key",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient scope, or an action bots can never take",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/bot/v1/status": {
+      "get": {
+        "summary": "Balances, goal, schedule, pending approvals",
+        "description": "Settled (locked) and pending balances are reported separately. Only settled deposits count toward the goal.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/goals": {
+      "get": {
+        "summary": "Active goal and cycle history",
+        "description": "Active goal (target, status, Hard Lock flag, milestones) and every closed Roll Over & Relock cycle.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/transfers": {
+      "get": {
+        "summary": "Deposits and (simulated) withdrawals",
+        "description": "Latest 100 deposits with status history (pending, posted, settled, returned, failed, cancelled). No provider IDs or tokens.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/schedule": {
+      "get": {
+        "summary": "Schedule status",
+        "description": "Status, next deposit dates, recent periods with skip/defer reasons, and authorization status (never the text, IP or signer details).\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/approvals": {
+      "get": {
+        "summary": "Approval requests and their outcomes",
+        "description": "Requests the bot created and whether the user approved, rejected, or let them expire.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/activity": {
+      "get": {
+        "summary": "This key's own activity log",
+        "description": "The last 50 calls made with this key. The user sees all keys' activity in the app.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/goals/propose": {
+      "post": {
+        "summary": "Propose a goal change (needs user approval)",
+        "description": "Creates a pending `goal_change` approval. Nothing changes until the user approves in the app.\n\nRequired scope: `propose`.",
+        "security": [
+          {
+            "botKey": [
+              "propose"
+            ]
+          }
+        ],
+        "x-scope": "propose",
+        "responses": {
+          "202": {
+            "description": "Approval created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalProposal"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/rollovers/prepare": {
+      "post": {
+        "summary": "Prepare a Roll Over & Relock (needs user approval)",
+        "description": "Returns the preview calculation (vault, withdraw, remaining, new goal, additional needed) and creates a pending `rollover` approval. If it withdraws, the user must also enter the unlock code. While the vault is locked only `raise` can be prepared (423).\n\nRequired scope: `propose`.",
+        "security": [
+          {
+            "botKey": [
+              "propose"
+            ]
+          }
+        ],
+        "x-scope": "propose",
+        "responses": {
+          "202": {
+            "description": "Preview + approval created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "423": {
+            "description": "Vault locked"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RolloverPrepare"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/schedule/pause": {
+      "post": {
+        "summary": "Pause future deposits (immediate)",
+        "description": "Pausing is always safe: it stops future deposits only and never touches saved money or the lock. Resuming requires a `resume_schedule` request approved by the user.\n\nRequired scope: `pause`.",
+        "security": [
+          {
+            "botKey": [
+              "pause"
+            ]
+          }
+        ],
+        "x-scope": "pause",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/requests": {
+      "post": {
+        "summary": "Create a sensitive-action request (needs user approval)",
+        "description": "Withdrawals (only after the goal-based unlock; the user enters the unlock code), schedule amount/timing changes, funding-account changes, revoking/granting the ACH authorization, settings changes, resuming.\n\nRequired scope: `request`.",
+        "security": [
+          {
+            "botKey": [
+              "request"
+            ]
+          }
+        ],
+        "x-scope": "request",
+        "responses": {
+          "202": {
+            "description": "Approval created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "423": {
+            "description": "Vault locked (withdrawal requested before the goal was reached)"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Request"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

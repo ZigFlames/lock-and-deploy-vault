@@ -1,0 +1,18 @@
+{
+  "name": "lock-and-deploy-vault-demo",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-only PWA build of the Lock & Deploy vault prototype: the server's own service, rules, bot API and mock provider bundled for the browser with localStorage. Fictional money only.",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "python3 -m http.server 4190 --directory dist"
+  },
+  "devDependencies": {
+    "@noble/ciphers": "^1.2.1",
+    "@noble/hashes": "^1.7.1",
+    "buffer": "^6.0.3",
+    "esbuild": "^0.24.2"
+  },
+  "license": "UNLICENSED"
+}
