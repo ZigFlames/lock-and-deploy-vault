@@ -145,6 +145,7 @@ def main():
         pg.evaluate("window.scrollTo(0, document.querySelector('[data-testid=sim-bot]').getBoundingClientRect().top + scrollY - 70)"); pg.wait_for_timeout(200)
         pg.screenshot(path=SHOT.replace(".png", "-bot.png"))
         check("fresh key after emergency stop; unlock still refused (403)", "403" in pg.get_by_test_id("sim-bot-out").inner_text())
+        pg.goto(URL + "#/"); pg.wait_for_timeout(500)
         ctx.set_offline(True)
         pg.reload(); pg.wait_for_timeout(1500)
         check("works offline (service worker cache)", "Mattress" in pg.inner_text("main") or "MATTRESS" in pg.inner_text("main"), pg.inner_text("main")[:80])
