@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Lock &amp; Deploy Vault · Simulation</title>
+  <meta name="theme-color" content="#0A0A0B">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Lock & Deploy Vault: a Hard Lock savings vault simulation with automatic deposits, Roll Over & Relock and an approval-gated AI bot. Fictional money only; runs entirely in your browser.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="L&amp;D Vault">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/"><span class="brand__lock" aria-hidden="true"></span>Lock &amp; Deploy</a>
+    <span class="badge-sim" id="mode-badge">Simulation · fictional money</span>
+  </header>
+  <div class="sandbox-banner" id="sandbox-banner" role="note">Simulation · fictional money. Everything runs and stays in this browser.</div>
+  <main class="main" id="app" aria-live="polite"><p class="muted">Loading…</p></main>
+  <nav class="tabbar" aria-label="Main" id="tabbar">
+    <a href="#/" data-tab="home">Home</a>
+    <a href="#/transfers" data-tab="transfers">Transfers</a>
+    <a href="#/inbox" data-tab="inbox">Inbox<span class="tab-badge" id="inbox-badge" hidden></span></a>
+    <a href="#/vault" data-tab="vault">Vault</a>
+    <a href="#/more" data-tab="more">More</a>
+  </nav>
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="assertive"></div>
+  <script type="module" src="js/engine.js?v=81ca4639ab"></script>
+  <script type="module" src="js/app.js?v=81ca4639ab"></script>
+  <script type="module" src="js/sw-register.js?v=81ca4639ab"></script>
+</body>
+</html>
