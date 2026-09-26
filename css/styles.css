@@ -219,3 +219,11 @@ table.mini td:last-child { text-align: right; }
 .sim-bot-grid .btn { white-space: normal; line-height: 1.25; min-height: 44px; }
 .sim-bot-out { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); overflow-wrap: anywhere; }
 .chip--s201 { color: var(--ok); border-color: #1e4430; }
+/* Go Blind */
+.card--blind { border-color: #3a3550; background: linear-gradient(180deg, #16141f, #141416); }
+.pill--blind, .chip--blind { display: inline-block; background: #221f33; color: #c9c2f0; border: 1px solid #3a3550; border-radius: 999px; padding: 3px 10px; font-size: .78rem; white-space: nowrap; }
+.hero__amount--blind { font-size: 1.15rem; color: #c9c2f0; letter-spacing: 0; }
+.hero--blind .ring circle:last-child { stroke: #3a3550; }
+.banner--warn { border-color: #b06a1f; background: linear-gradient(180deg, #2a1a0b, #141416); }
+.banner--warn .banner__icon { background: #b06a1f; }
+.input--hidden { color: var(--muted); font-style: italic; }

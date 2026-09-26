@@ -1,6 +1,6 @@
 // Service worker for the Lock & Deploy Vault simulation. Precaches the whole app so it works offline.
 // Cache name changes on every build, so a new deploy replaces the old files.
-const CACHE = 'ldb-vault-81ca4639ab';
+const CACHE = 'ldb-vault-e34670daf9';
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,9 +11,9 @@ const ASSETS = [
   "./icons/icon.svg",
   "./icons/maskable-512.png",
   "./icons/maskable.svg",
-  "./js/app.js?v=81ca4639ab",
-  "./js/engine.js?v=81ca4639ab",
-  "./js/sw-register.js?v=81ca4639ab",
+  "./js/app.js?v=e34670daf9",
+  "./js/engine.js?v=e34670daf9",
+  "./js/sw-register.js?v=e34670daf9",
   "./manifest.webmanifest"
 ];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
