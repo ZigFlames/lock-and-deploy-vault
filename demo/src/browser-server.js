@@ -7,6 +7,7 @@
 import { emptyState, migrate } from '../../server/store.js';
 import { Service, AppError } from '../../server/service.js';
 import { createRoutes } from '../../server/routes.js';
+import { hashBlindPasscode, verifyBlindPasscode } from './blind-passcode.js';
 import { createBotApi } from '../../server/bot.js';
 import { createNotifier } from '../../server/notifiers/index.js';
 import { MockProvider } from '../../server/providers/mock.js';
@@ -46,6 +47,14 @@ const service = new Service({ store, key: tokenKey(), config });
 service.notifier = createNotifier({ store, env: {}, log: quietLog, enabled: () => ({ ...service.settings.notifications, webhook: false }) });
 service.provider = new MockProvider({ store, today: () => service.today(), fundingBalanceCents: () => service.settings.mock.fundingBalanceCents });
 const bot = createBotApi({ service, store });
+// Go Blind: the static demo has no app passcode, so the user sets a separate "Go Blind passcode" the first time.
+// Only a salted PBKDF2 hash is kept (inside the demo's localStorage state, never sent to the UI). Clearing site data resets it.
+service.blindAuth = {
+  kind: 'blind_passcode',
+  needsSetup: () => !store.state.blind?.passcodeHash,
+  setup: async (p) => { store.state.blind.passcodeHash = await hashBlindPasscode(p); },
+  verify: async (p) => verifyBlindPasscode(p, store.state.blind?.passcodeHash),
+};
 const locked = (actor, fn) => store.withLock(async () => { service.actor = actor; service.bootstrap(); try { return await fn(); } finally { service.actor = 'system'; } });
 const fakeReq = () => ({ socket: { remoteAddress: 'this browser (demo)' }, headers: { 'user-agent': navigator.userAgent } });
 
@@ -55,12 +64,16 @@ const botCall = (method, path, body) => store.withLock(async () => {
   const key = localStorage.getItem(K.bot) || '';
   return bot.handle({ method, pathname: path, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, ip: 'sim-bot', readJson: async () => body || {} });
 });
+const blindOn = () => !!store.state.blind?.on;
 const SIM_BOT = {
   status: () => botCall('GET', '/bot/v1/status'),
-  propose_raise: () => botCall('POST', '/bot/v1/goals/propose', { targetCents: (store.state.goal?.targetCents || 300000) + 50000, reason: 'You are ahead of schedule; aim $500 higher.' }),
+  blind_on: () => botCall('POST', '/bot/v1/blind/on', {}),
+  try_blind_off: () => botCall('POST', '/bot/v1/blind/off', {}),
+  try_reveal_amounts: () => botCall('POST', '/bot/v1/requests', { type: 'reveal_amounts', reason: 'Tell me the numbers.' }),
+  propose_raise: () => botCall('POST', '/bot/v1/goals/propose', { targetCents: (store.state.goal?.targetCents || 300000) + 50000, reason: blindOn() ? 'You are ahead of schedule; aim a bit higher.' : 'You are ahead of schedule; aim $500 higher.' }),
   request_resume: () => botCall('POST', '/bot/v1/requests', { type: 'resume_schedule', reason: 'Balance looks healthy again.' }),
   pause: () => botCall('POST', '/bot/v1/schedule/pause', { reason: 'Funding balance looks low.' }),
-  prepare_rollover: () => botCall('POST', '/bot/v1/rollovers/prepare', { mode: 'partial', withdrawCents: 100000, newTargetCents: 400000, reason: 'Take $1,000 for the mattress, relock the rest toward $4,000.' }),
+  prepare_rollover: () => botCall('POST', '/bot/v1/rollovers/prepare', { mode: 'partial', withdrawCents: 100000, newTargetCents: 400000, reason: blindOn() ? 'Take some for the mattress, relock the rest.' : 'Take $1,000 for the mattress, relock the rest toward $4,000.' }),
   try_unlock: () => botCall('POST', '/bot/v1/requests', { type: 'unlock', reason: 'Please unlock early.' }),
   try_lower: () => botCall('POST', '/bot/v1/goals/propose', { targetCents: Math.max(100, (store.state.goal?.targetCents || 300000) - 100000), reason: 'Lower the goal.' }),
   try_disable_hard_lock: () => botCall('POST', '/bot/v1/requests', { type: 'disable_hard_lock' }),
@@ -83,7 +96,9 @@ const extraRoutes = {
     }
     return { deferred: body.action };
   },
-  'POST /api/demo/wipe': async () => { localStorage.removeItem(K.state); localStorage.removeItem(K.bot); store.load(); service.bootstrap(); return { ok: true }; },
+  'POST /api/demo/wipe': async () => {
+    if (store.state.blind?.on) throw new AppError(423, 'blind_on', 'Turn off Go Blind first (with your Go Blind passcode). Clearing this site\'s data in the browser also resets the demo.');
+    localStorage.removeItem(K.state); localStorage.removeItem(K.bot); store.load(); service.bootstrap(); return { ok: true }; },
 };
 const routes = { ...createRoutes({ store, service, config }), ...extraRoutes };
 const baseState = routes['GET /api/state'];

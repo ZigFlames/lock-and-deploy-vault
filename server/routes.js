@@ -7,7 +7,7 @@ import { verifyAudit } from './audit.js';
 
 export function createRoutes({ store, service, config }) {
   const needMock = () => { if (service.provider.id !== 'mock') throw new AppError(400, 'unsupported', 'Mock provider only'); };
-  return {
+  const routes = {
     'GET /api/state': async () => service.view(),
     'POST /api/link/token': async ({ body }) => service.createLinkToken(body.role),
     'POST /api/link/sandbox-public-token': async () => {
@@ -56,9 +56,21 @@ export function createRoutes({ store, service, config }) {
     'POST /api/sandbox/clock/advance': async ({ body }) => { if (!config.demoClock) throw new AppError(403, 'disabled', 'Demo clock disabled'); await service.advanceClock(body.days); return service.view(); },
     'POST /api/sandbox/mock-balance': async ({ body }) => { needMock(); return service.updateSettings({ 'mock.fundingBalanceCents': body.cents }); },
     'POST /api/sandbox/reset': async () => {
+      if (service.blind.on) throw new AppError(423, 'blind_on', 'Turn off Go Blind first. A reset would otherwise remove it without the passcode.');
       const keep = { userAuth: store.state.userAuth, sessions: store.state.sessions };
       store.reset(); Object.assign(store.state, keep); service.bootstrap(); service.audit('sandbox_reset', {}, 'user'); return service.view();
     },
+    // Go Blind (hide all amounts). On: one tap + confirm. Off: passcode, rate-limited; impossible while "stay blind until goal" holds.
+    'GET /api/blind': async () => service.blindView(),
+    'POST /api/blind/on': async ({ body }) => service.blindOn(body, { by: 'user' }),
+    'POST /api/blind/off': async ({ body }) => service.blindOff(body),
     'POST /api/real-transfers/activate': async ({ body }) => service.activateRealTransfers(body),
   };
+  // Go Blind: every response is redacted on the way out, and error messages too, so amounts never reach the UI.
+  for (const [name, fn] of Object.entries(routes)) {
+    routes[name] = async (ctx) => {
+      try { return service.redactForUser(await fn(ctx)); } catch (e) { if (e && typeof e.message === 'string') e.message = service.redactErrorText(e.message); throw e; }
+    };
+  }
+  return routes;
 }

@@ -4,7 +4,9 @@
     "targetCents": 300000,
     "lockDays": 365,
     "unlockRule": "goal",
-    "milestonesCents": [150000]
+    "milestonesCents": [
+      150000
+    ]
   },
   "hardLock": {
     "defaultOn": true
@@ -46,5 +48,10 @@
   },
   "mock": {
     "fundingBalanceCents": 150000
+  },
+  "benefits": {
+    "receivesSSI": false,
+    "resourceLimitCents": 200000,
+    "warnAtPercent": 80
   }
 }

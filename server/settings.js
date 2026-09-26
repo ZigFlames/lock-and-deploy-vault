@@ -44,10 +44,14 @@ export const SCHEMA = {
   'bot.rateLimitPerMinute': int(1, 600),
   'bot.approvalExpiryDays': int(1, 30),
   'mock.fundingBalanceCents': cents(0, 100_000_000),
+  'benefits.receivesSSI': bool,
+  'benefits.resourceLimitCents': cents(0, 10_000_000),
+  'benefits.warnAtPercent': int(50, 100),
 };
 
 // Keys an AI bot may never change, not even through an approval request.
-export const BOT_FORBIDDEN_SETTINGS = ['hardLock.defaultOn', 'hardship.coolingOffDaysDefault', 'hardship.minCoolingOffDays', 'unlock.maxAttempts', 'unlock.codeExpiryDays', 'bot.rateLimitPerMinute'];
+export const BOT_FORBIDDEN_SETTINGS = ['hardLock.defaultOn', 'hardship.coolingOffDaysDefault', 'hardship.minCoolingOffDays', 'unlock.maxAttempts', 'unlock.codeExpiryDays', 'bot.rateLimitPerMinute',
+  'benefits.receivesSSI', 'benefits.resourceLimitCents', 'benefits.warnAtPercent'];
 
 const get = (o, k) => k.split('.').reduce((a, p) => (a == null ? a : a[p]), o);
 function set(o, k, v) { const ps = k.split('.'); let c = o; for (const p of ps.slice(0, -1)) c = c[p] = c[p] && typeof c[p] === 'object' ? c[p] : {}; c[ps.at(-1)] = v; }

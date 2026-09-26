@@ -8,12 +8,16 @@ let shownCode = null; // unlock code shown once (kept only in memory for this sc
 let shownKey = null;  // new bot key shown once
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const money = (c) => `$${(Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const money0 = (c) => `$${Math.round(Number(c || 0) / 100).toLocaleString('en-US')}`;
+const money = (c) => c === null ? 'Hidden' : `$${(Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money0 = (c) => c === null ? 'Hidden' : `$${Math.round(Number(c || 0) / 100).toLocaleString('en-US')}`;
 const pretty = (d) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '—');
 const short = (d) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '—');
 const acctLabel = (a) => (a ? `${a.name} ••${a.mask}` : '—');
 const pct = (n) => Math.max(0, Math.min(100, Math.round(n * 100)));
+// Go Blind: the server already nulls every amount while it is on; the UI shows neutral text instead.
+const BLIND = () => !!S?.blind?.redacted;
+const HIDDEN_TXT = 'Hidden · Go Blind on';
+const hiddenCard = (title, body = '') => `<div class="card card--blind" data-testid="blind-hidden"><div class="row-between"><h2>${esc(title)}</h2><span class="pill pill--blind">${HIDDEN_TXT}</span></div>${body ? `<p class="small muted" data-mt>${body}</p>` : ''}</div>`;
 
 async function api(path, body) {
   const res = await (window.LDB_TRANSPORT || fetch)(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -64,6 +68,7 @@ function viewAuth() {
 
 // ---------------- Home ----------------
 function pendingVsSettled() {
+  if (BLIND()) return hiddenCard('Settled vs pending', 'Settled, pending and to-go amounts are hidden. Deposits keep running on schedule; only <strong>settled</strong> deposits count toward the lock.');
   const g = S.goal, t = S.totals;
   const target = g?.targetCents || 1;
   const sP = pct(t.vaultCents / target), pP = Math.min(100 - sP, pct(t.pendingCents / target));
@@ -76,12 +81,13 @@ function pendingVsSettled() {
 }
 function banners() {
   const out = [];
+  if (S.benefitsAlert) out.push(`<div class="banner banner--warn" role="alert" data-testid="benefits-alert"><span class="banner__icon">!</span><span class="banner__body"><strong>Benefits guard${S.benefitsAlert.level === 'over' ? ': over the limit' : ''}</strong><br><span class="small">${esc(S.benefitsAlert.message)}</span></span></div>`);
   if (S.pendingApprovals) out.push(`<a class="banner" href="#/inbox" data-testid="approval-banner"><span class="banner__icon">${S.pendingApprovals}</span><span class="banner__body"><strong>Your bot is waiting for approval</strong><br><span class="small muted">Nothing happens until you approve it in the Inbox.</span></span></a>`);
   for (const n of S.notifications) out.push(`<div class="banner" data-testid="notification"><span class="banner__icon">${n.type === 'goal_reached' ? '✓' : n.type.startsWith('milestone') ? '★' : '!'}</span><span class="banner__body"><strong>${esc(n.title)}</strong><br><span class="small muted">${esc(n.body || '')}</span></span><button class="x" data-action="dismiss" data-id="${esc(n.id)}" aria-label="Dismiss">×</button></div>`);
   return out.join('');
 }
 function viewHome() {
-  const g = S.goal, t = S.totals, s = S.schedule;
+  const g = S.goal, t = S.totals, s = S.schedule, blind = BLIND();
   const unlocked = g?.status === 'unlocked';
   const funding = S.accounts.find((a) => a.id === S.roles.fundingAccountId);
   const dest = S.accounts.find((a) => a.id === S.roles.destinationAccountId);
@@ -95,24 +101,84 @@ function viewHome() {
   const setupDone = steps.every((x) => x[1]);
   return `
   ${banners()}
-  <section class="card hero">
-    <div class="hero__visual">${ring(g ? t.vaultCents / g.targetCents : 0)}<div class="hero__lock">${LOCK_SVG(unlocked)}</div></div>
+  <section class="card hero ${blind ? 'hero--blind' : ''}">
+    <div class="hero__visual">${ring(blind ? 0 : g ? t.vaultCents / g.targetCents : 0)}<div class="hero__lock">${LOCK_SVG(unlocked)}</div></div>
     <div class="eyebrow">${esc(g ? g.name : 'No goal yet')}${g && g.cycle > 1 ? ` · cycle ${g.cycle}` : ''}</div>
-    <div class="hero__amount" data-testid="locked-amount">${money(t.vaultCents)}</div>
-    <div class="muted small">settled of ${g ? money0(g.targetCents) : '—'}</div>
-    ${g ? `<span class="pill ${unlocked ? 'pill--unlocked' : 'pill--locked'}" data-testid="lock-pill">${unlocked ? 'Unlocked · goal reached' : g.status === 'closed' ? 'Closed' : g.hardLock ? `Hard Lock · opens at ${money0(g.targetCents)} settled` : `Locked · opens at ${money0(g.targetCents)} settled`}</span>` : ''}
+    <div class="hero__amount ${blind ? 'hero__amount--blind' : ''}" data-testid="locked-amount">${blind ? HIDDEN_TXT : money(t.vaultCents)}</div>
+    <div class="muted small">${blind ? 'Amounts stay hidden until the goal is reached' : `settled of ${g ? money0(g.targetCents) : '—'}`}</div>
+    ${g ? `<span class="pill ${unlocked ? 'pill--unlocked' : 'pill--locked'}" data-testid="lock-pill">${unlocked ? 'Unlocked · goal reached' : g.status === 'closed' ? 'Closed' : blind ? `${g.hardLock ? 'Hard Lock' : 'Locked'} · opens when the goal is reached` : g.hardLock ? `Hard Lock · opens at ${money0(g.targetCents)} settled` : `Locked · opens at ${money0(g.targetCents)} settled`}</span>` : ''}
   </section>
   <div class="stats">
-    <div class="stat"><div class="stat__label">Settled</div><div class="stat__value" data-testid="settled-amount">${money(t.vaultCents)}</div></div>
-    <div class="stat"><div class="stat__label">Pending</div><div class="stat__value" data-testid="pending-amount">${money(t.pendingCents)}</div></div>
-    <div class="stat"><div class="stat__label">Next deposit</div><div class="stat__value">${s?.status === 'active' && S.nextPulls[0] ? short(S.nextPulls[0]) : s ? chip(s.status) : '—'}</div></div>
+    ${blind ? `<div class="stat"><div class="stat__label">Deposits</div><div class="stat__value" data-testid="blind-deposit-status">${s ? chip(s.status) : '—'}</div></div>
+    <div class="stat"><div class="stat__label">Amounts</div><div class="stat__value small">Hidden</div></div>` : `<div class="stat"><div class="stat__label">Settled</div><div class="stat__value" data-testid="settled-amount">${money(t.vaultCents)}</div></div>
+    <div class="stat"><div class="stat__label">Pending</div><div class="stat__value" data-testid="pending-amount">${money(t.pendingCents)}</div></div>`}
+    <div class="stat"><div class="stat__label">Next deposit</div><div class="stat__value" data-testid="next-deposit">${s?.status === 'active' && S.nextPulls[0] ? short(S.nextPulls[0]) : s ? chip(s.status) : '—'}</div></div>
   </div>
+  ${blind && s && ['active', 'paused'].includes(s.status) ? `<div class="card"><div class="row-between"><span class="small">Automatic deposits ${chip(s.status)}</span>${s.status === 'active' ? '<button class="btn btn--sm" data-action="pause" data-testid="home-pause">Pause</button>' : '<button class="btn btn--sm btn--gold" data-action="resume" data-testid="home-resume">Resume</button>'}</div></div>` : ''}
+  ${blindCard()}
   ${g ? pendingVsSettled() : ''}
-  ${g?.milestones?.length ? `<div class="card"><h2>Milestones</h2>${g.milestones.map((m) => `<div class="row-between small"><span>${m.reachedOn ? '★' : '☆'} ${esc(m.label)}</span><span class="muted">${m.reachedOn ? `reached ${short(m.reachedOn)}` : `${money0(Math.max(0, m.targetCents - t.vaultCents))} to go`}</span></div>`).join('')}<div class="row-between small"><span>🔒 Goal ${money0(g.targetCents)} (unlock)</span><span class="muted">${unlocked ? `reached ${short(g.reachedOn)}` : `${money0(g.remainingCents)} to go`}</span></div></div>` : ''}
-  ${S.overBenefitLimit ? `<div class="card card--warn"><strong class="warn">Benefit limit heads-up.</strong> <span class="small">This goal is above the SSI $2,000 resource limit for an individual. See the Authorize step and consider an ABLE account.</span></div>` : ''}
+  ${blind ? '' : g?.milestones?.length ? `<div class="card"><h2>Milestones</h2>${g.milestones.map((m) => `<div class="row-between small"><span>${m.reachedOn ? '★' : '☆'} ${esc(m.label)}</span><span class="muted">${m.reachedOn ? `reached ${short(m.reachedOn)}` : `${money0(Math.max(0, m.targetCents - t.vaultCents))} to go`}</span></div>`).join('')}<div class="row-between small"><span>🔒 Goal ${money0(g.targetCents)} (unlock)</span><span class="muted">${unlocked ? `reached ${short(g.reachedOn)}` : `${money0(g.remainingCents)} to go`}</span></div></div>` : ''}
+  ${S.overBenefitLimit && !blind ? `<div class="card card--warn"><strong class="warn">Benefit limit heads-up.</strong> <span class="small">This goal is above the SSI $2,000 resource limit for an individual. See the Authorize step and consider an ABLE account.</span></div>` : ''}
   ${setupDone ? '' : `<div class="section-title">Setup</div>
   <div class="card"><ol class="steps">${steps.map(([label, done, href], i) => `<li><span class="dot ${done ? 'dot--done' : ''}">${done ? '✓' : i + 1}</span><a href="${href}">${esc(label)}</a></li>`).join('')}</ol></div>`}
   <div class="card small muted">Provider: <strong class="gold">${esc(S.provider.label)}</strong>. The app stores only provider tokens (encrypted) and IDs, plus account names and last-4 digits. It never sees bank usernames or passwords and never touches bank login or account recovery. Real money is <strong>hard-disabled</strong>.</div>`;
+}
+
+// ---------------- Go Blind ----------------
+function blindCard() {
+  const b = S.blind; if (!b) return '';
+  const g = S.goal, saving = g?.status === 'saving';
+  if (!b.on) return `<section class="card card--blind" data-testid="blind-card">
+    <div class="row-between"><h2>Go Blind</h2><span class="chip">off</span></div>
+    <p class="small muted">Hide every dollar amount (balances, deposits, progress, history) so you are not tempted to check. Deposits, Pause/Resume, the Inbox and Emergency stop keep working. Turning it off needs your ${b.passcodeKind === 'blind_passcode' ? 'Go Blind passcode' : 'app passcode'}.</p>
+    <button class="btn btn--gold btn--block" data-action="blind-on-open" data-testid="blind-on-open">Go Blind</button></section>`;
+  const locked = b.lockedUntil ? `<p class="small bad" data-mt data-testid="blind-lockout">Too many wrong passcodes. Try again after ${esc(new Date(b.lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}.</p>` : '';
+  return `<section class="card card--blind" data-testid="blind-card">
+    <div class="row-between"><h2>Go Blind</h2><span class="pill pill--blind" data-testid="blind-status">On</span></div>
+    <p class="small">${b.redacted ? 'All amounts are hidden, from you and from the bot.' : 'Goal reached: amounts are shown again for the unlock, withdrawal and rollover.'} ${b.enabledAt ? `On since ${esc(new Date(b.enabledAt).toLocaleDateString())}${b.enabledBy === 'bot' ? ' (turned on by your bot)' : ''}.` : ''}</p>
+    ${b.stayUntilGoal ? '<p class="small warn" data-mt data-testid="blind-stay-note">You chose <strong>stay blind until goal</strong>. Go Blind turns off only when the vault unlocks. There is no passcode override.</p>'
+      : `<button class="btn btn--block" data-mt data-action="blind-off-open" data-testid="blind-off-open" ${b.lockedUntil ? 'disabled' : ''}>Turn off Go Blind (passcode)</button>${locked}
+      ${saving ? '<button class="btn btn--sm btn--ghost btn--block" data-mt data-action="blind-add-stay" data-testid="blind-add-stay">Also stay blind until goal (cannot be undone)</button>' : ''}`}
+  </section>`;
+}
+function openBlindOn() {
+  const b = S.blind, root = $('#modal-root'), saving = S.goal?.status === 'saving', setup = b.needsPasscodeSetup;
+  root.innerHTML = `<div class="overlay" role="dialog" aria-modal="true" aria-label="Go Blind"><form class="sheet" id="blind-on-form" data-testid="blind-on-modal">
+    <div class="sheet__head"><span class="sheet__brand">Go Blind</span><button class="x" type="button" data-close aria-label="Close">×</button></div>
+    <h2>Hide all amounts?</h2>
+    <p class="small muted">Balances, deposit amounts, progress and history amounts are replaced with "Hidden". You still see the lock, goal name, deposit status and dates, Pause/Resume, the Inbox and Emergency stop, and you'll see when the goal is reached.</p>
+    ${setup ? `<label class="field"><span>Choose a Go Blind passcode (4 to 12 digits)</span><input type="password" name="passcode" inputmode="numeric" pattern="[0-9]{4,12}" minlength="4" maxlength="12" autocomplete="new-password" required data-testid="blind-new-passcode"></label>
+    <label class="field"><span>Repeat it</span><input type="password" name="passcode2" inputmode="numeric" pattern="[0-9]{4,12}" maxlength="12" autocomplete="new-password" required data-testid="blind-new-passcode2"></label>
+    <p class="small muted" data-testid="blind-demo-note">Demo: stored only in this browser as a salted hash (PBKDF2). Clearing this site's data resets the demo, including this passcode and Go Blind.</p>`
+    : `<p class="small muted">To turn it off later you'll need your ${b.passcodeKind === 'blind_passcode' ? 'Go Blind passcode' : 'app passcode'}.</p>`}
+    <label class="toggle-row"><span><strong>Stay blind until goal</strong><br><span class="small muted">${saving ? 'Go Blind cannot be turned off at all until the vault unlocks, not even with the passcode.' : 'Only available while a goal is saving.'}</span></span><input type="checkbox" name="stay" ${saving ? '' : 'disabled'} data-testid="blind-stay"></label>
+    <button class="btn btn--gold btn--block" data-mt type="submit" data-testid="blind-on-confirm">Yes, hide all amounts</button>
+  </form></div>`;
+  const f = $('#blind-on-form', root); $('[data-close]', root).onclick = () => { root.innerHTML = ''; };
+  f.onsubmit = async (e) => {
+    e.preventDefault(); const d = new FormData(f);
+    if (setup && d.get('passcode') !== d.get('passcode2')) return toast('The two passcodes do not match.', true);
+    const r = await act(() => api('/api/blind/on', { confirm: true, stayUntilGoal: d.get('stay') === 'on', passcode: setup ? d.get('passcode') : undefined }), 'Go Blind is on. Amounts are hidden.');
+    if (r) root.innerHTML = '';
+  };
+}
+function openBlindOff() {
+  const b = S.blind, root = $('#modal-root'), demo = b.passcodeKind === 'blind_passcode';
+  root.innerHTML = `<div class="overlay" role="dialog" aria-modal="true" aria-label="Turn off Go Blind"><form class="sheet" id="blind-off-form" data-testid="blind-off-modal">
+    <div class="sheet__head"><span class="sheet__brand">Turn off Go Blind</span><button class="x" type="button" data-close aria-label="Close">×</button></div>
+    <p class="small muted">Enter your ${demo ? 'Go Blind passcode' : 'app passcode'} to show amounts again. After 5 wrong tries it locks for 15 minutes.</p>
+    <label class="field"><span>${demo ? 'Go Blind passcode' : 'App passcode'}</span><input type="password" name="passcode" ${demo ? 'inputmode="numeric"' : ''} autocomplete="current-password" required data-testid="blind-off-passcode"></label>
+    <p class="small muted" id="blind-off-msg" data-testid="blind-off-msg">${b.triesLeft < 5 ? `${b.triesLeft} tries left.` : ''}</p>
+    <button class="btn btn--block" type="submit" data-testid="blind-off-confirm">Show amounts</button>
+  </form></div>`;
+  const f = $('#blind-off-form', root); $('[data-close]', root).onclick = () => { root.innerHTML = ''; };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('/api/blind/off', { passcode: new FormData(f).get('passcode') }); root.innerHTML = ''; toast('Go Blind is off.'); await refresh(); } catch (err) {
+      $('#blind-off-msg', root).innerHTML = `<span class="bad">${esc(err.message)}</span>`; f.passcode.value = '';
+      if (err.status === 429 || err.status === 423) { root.innerHTML = ''; toast(err.message, true); await refresh(); }
+    }
+  };
 }
 
 function viewAccounts() {
@@ -146,7 +212,16 @@ function viewAccounts() {
 
 
 // ---------------- Plan (goal + Hard Lock + schedule) ----------------
+function viewPlanBlind() {
+  const g = S.goal, s = S.schedule;
+  return `<h1>Plan</h1>
+  <div class="card card--blind" data-testid="plan-blind"><div class="row-between"><h2>${esc(g?.name || 'Goal')}</h2>${g?.hardLock ? '<span class="badge-lock">🔒 Hard Lock</span>' : ''}</div>
+    <p class="small muted" data-mt>Goal and deposit editing is hidden while Go Blind is on (every field is an amount). The lock keeps working exactly as set.</p><span class="pill pill--blind">${HIDDEN_TXT}</span></div>
+  ${s ? `<div class="card"><h2>Automatic deposits</h2><p class="small">Status ${chip(s.status)}</p>${s.status === 'active' && S.nextPulls.length ? `<div class="small muted" data-mt>Next: <span class="preview-dates">${S.nextPulls.map((d) => `<span class="chip chip--date">${short(d)}</span>`).join('')}</span></div>` : ''}</div>` : ''}
+  ${blindCard()}`;
+}
 function viewPlan() {
+  if (BLIND()) return viewPlanBlind();
   const g = S.goal;
   const s = S.schedule || { amountCents: S.settings.contribution.amountCents, frequency: S.settings.contribution.frequency, benefitType: S.settings.contribution.benefitType, offsetDays: S.settings.contribution.offsetDays, dayOfMonth: 2, anchorDate: S.today, benefitDay: 1 };
   const sel = (v, cur) => (v === cur ? 'selected' : '');
@@ -219,23 +294,23 @@ function viewTransfers() {
       ${['needs_authorization', 'revoked'].includes(s.status) ? '<a class="btn btn--sm btn--gold" href="#/authorize">Authorize</a>' : ''}
     </div>
     <p class="small muted" data-mt>${esc(s.description)}${s.completedReason === 'goal_reached' ? ' · stopped: goal reached' : ''}${s.pausedReason && s.status === 'paused' ? ` · paused by ${esc(s.pausedReason.replace(/_/g, ' '))}` : ''}</p>
-    ${s.status === 'paused' ? `<p class="small warn" data-mt data-testid="paused-note">Paused: no new deposits will be created. Your ${money(S.totals.vaultCents)} saved stays locked; pausing never unlocks anything.${pending ? ` ${pending} pending transfer${pending > 1 ? 's are' : ' is'} still in flight. Cancel ${pending > 1 ? 'them' : 'it'} below if you want.` : ''} Resuming skips missed dates (no catch-up).</p>` : ''}
+    ${s.status === 'paused' ? `<p class="small warn" data-mt data-testid="paused-note">Paused: no new deposits will be created. ${BLIND() ? 'What you saved' : `Your ${money(S.totals.vaultCents)} saved`} stays locked; pausing never unlocks anything.${pending ? ` ${pending} pending transfer${pending > 1 ? 's are' : ' is'} still in flight. Cancel ${pending > 1 ? 'them' : 'it'} below if you want.` : ''} Resuming skips missed dates (no catch-up).</p>` : ''}
     ${s.status === 'active' && S.nextPulls.length ? `<div class="small muted" data-mt>Next: <span class="preview-dates">${S.nextPulls.map((d) => `<span class="chip chip--date">${short(d)}</span>`).join('')}</span></div>` : ''}
     ${['active', 'paused'].includes(s.status) ? '<details class="tools"><summary>Cancel the whole schedule</summary><p class="small muted" data-mt>Ends all future deposits and the ACH authorization. Saved money and the lock stay exactly as they are.</p><button class="btn btn--sm btn--danger" data-action="cancel-schedule">Cancel schedule</button></details>' : ''}`;
   const periods = (s?.periods || []).filter((p) => ['deferred', 'skipped'].includes(p.status));
   return `
   <h1>Transfers</h1>
   <div class="card">${control}</div>
-  <div class="stats">
+  ${BLIND() ? hiddenCard('Settled · pending · returned', 'Totals are hidden. Each deposit below still shows its date and status.') : `<div class="stats">
     <div class="stat"><div class="stat__label">Settled</div><div class="stat__value">${money(S.totals.vaultCents)}</div></div>
     <div class="stat"><div class="stat__label">Pending</div><div class="stat__value">${money(S.totals.pendingCents)}</div></div>
     <div class="stat"><div class="stat__label">Returned</div><div class="stat__value">${money(S.totals.returnedCents)}</div></div>
-  </div>
+  </div>`}
   ${periods.length ? `<div class="section-title">Overdraft protection</div><div class="card">${periods.map((p) => `<div class="log-item"><div class="row-between"><span>${short(p.date)} deposit</span>${chip(p.status)}</div><div class="small muted">${esc(p.reasons.at(-1)?.reason || '')}${p.status === 'deferred' ? ` Retrying ${short(p.nextAttemptOn)}.` : ''}</div></div>`).join('')}</div>` : ''}
   <div class="section-title">Deposits</div>
   <div class="card" data-testid="transfer-list">${S.transfers.length ? S.transfers.map((t) => `
     <div class="tr" data-testid="transfer">
-      <div class="row-between"><span class="tr__amt">${money(t.amountCents)}</span>${chip(t.status)}</div>
+      <div class="row-between"><span class="tr__amt">${BLIND() ? 'Deposit · <span class="muted">Hidden</span>' : money(t.amountCents)}</span>${chip(t.status)}</div>
       <div class="small muted">${short(t.date)} · ${esc(t.funding.name)} ••${esc(t.funding.mask)} → ${esc(t.destination.name)} ••${esc(t.destination.mask)}</div>
       ${timeline(t)}
       ${t.failureReason ? `<div class="small bad">${esc(t.failureReason.achReturnCode ? `${t.failureReason.achReturnCode}: ` : '')}${esc(t.failureReason.description || '')}</div>` : ''}
@@ -254,14 +329,14 @@ function viewTransfers() {
   <div class="card">
     <p class="small muted">App date: <strong class="gold" data-testid="app-date">${pretty(S.today)}</strong>${S.clockOffsetDays ? ` (+${S.clockOffsetDays} days)` : ''}. Advancing runs the engine day by day, exactly like the unattended timer / <code>npm run tick</code>.</p>
     <div class="btn-row"><button class="btn btn--sm" data-action="clock" data-days="1" data-testid="clock-1">+1 day</button><button class="btn btn--sm" data-action="clock" data-days="7" data-testid="clock-7">+7 days</button><button class="btn btn--sm" data-action="clock" data-days="30" data-testid="clock-30">+30 days</button></div>
-    ${S.provider.id === 'mock' ? `<label class="field" data-mt><span>Mock funding balance ($) for overdraft tests</span><input type="number" id="mock-balance" value="${esc(S.settings.mock.fundingBalanceCents / 100)}" min="0" step="1"></label><button class="btn btn--sm btn--ghost btn--block" data-action="mock-balance">Set mock balance</button>` : ''}
+    ${S.provider.id === 'mock' && !BLIND() ? `<label class="field" data-mt><span>Mock funding balance ($) for overdraft tests</span><input type="number" id="mock-balance" value="${esc(S.settings.mock.fundingBalanceCents / 100)}" min="0" step="1"></label><button class="btn btn--sm btn--ghost btn--block" data-action="mock-balance">Set mock balance</button>` : ''}
     <button class="btn btn--sm btn--ghost btn--block" data-mt data-action="run">Run engine now</button>
   </div>` : ''}`;
 }
 
 // ---------------- Vault ----------------
 function viewVault() {
-  const g = S.goal, t = S.totals, v = S.vault;
+  const g = S.goal, t = S.totals, v = S.vault, blind = BLIND();
   if (!g) return '<h1>Vault</h1><p class="muted">No goal.</p>';
   const unlocked = g.status === 'unlocked';
   const h = S.hardship;
@@ -270,8 +345,8 @@ function viewVault() {
   <section class="card hero">
     <div class="hero__lock hero__lock--inline">${LOCK_SVG(unlocked, 56)}</div>
     <div class="eyebrow" data-mt>${esc(g.name)}</div>
-    <div class="hero__amount">${money(t.vaultCents)}</div>
-    <div class="muted small">settled in the vault${t.pendingCents ? ` · ${money(t.pendingCents)} pending (not counted)` : ''}</div>
+    <div class="hero__amount ${blind ? 'hero__amount--blind' : ''}" data-testid="vault-amount">${blind ? HIDDEN_TXT : money(t.vaultCents)}</div>
+    <div class="muted small">${blind ? 'Balance hidden · deposits keep running' : `settled in the vault${t.pendingCents ? ` · ${money(t.pendingCents)} pending (not counted)` : ''}`}</div>
     <span class="pill ${unlocked ? 'pill--unlocked' : 'pill--locked'}" data-testid="vault-status">${unlocked ? 'Unlocked' : g.status === 'closed' ? 'Closed' : 'Locked'}</span>
   </section>
   ${unlocked ? `
@@ -292,7 +367,7 @@ function viewVault() {
   <a class="btn btn--gold btn--block" href="#/rollover" data-testid="go-rollover">Roll Over &amp; Relock</a>` : g.status === 'saving' ? `
   <section class="card">
     <div class="lockline">${LOCK_SVG(false, 26)}<div><h2>${g.hardLock ? 'Hard Lock is on' : 'Locked'}</h2>
-    <p class="small">${g.hardLock ? 'There is no early unlock in this app: no override code, no admin bypass, and the AI bot cannot unlock it either.' : 'This goal was created without Hard Lock.'} The vault opens only when <strong>settled</strong> deposits reach <strong>${money0(g.targetCents)}</strong>${g.unlockRule === 'goal_and_date' ? ` and ${pretty(g.releaseDate)} has passed` : ''}. ${money0(g.remainingCents)} to go.</p>
+    <p class="small">${g.hardLock ? 'There is no early unlock in this app: no override code, no admin bypass, and the AI bot cannot unlock it either.' : 'This goal was created without Hard Lock.'} The vault opens only when <strong>settled</strong> deposits reach ${blind ? 'the goal' : `<strong>${money0(g.targetCents)}</strong>`}${g.unlockRule === 'goal_and_date' ? ` and ${pretty(g.releaseDate)} has passed` : ''}. ${blind ? 'Amount to go is hidden (Go Blind).' : `${money0(g.remainingCents)} to go.`}</p>
     <p class="small muted">Emergency stop and pause only stop <em>future</em> deposits. They never release money. <a href="#/bank">About your bank account</a>.</p></div></div>
   </section>
   ${g.hardship.enabled ? `
@@ -301,6 +376,7 @@ function viewVault() {
     ${h?.status === 'cooling_off' ? `<p class="small">Requested ${pretty(h.requestedOn)} for ${money(h.amountCents)}. Cooling-off until <strong>${pretty(h.availableOn)}</strong>.</p>
       <button class="btn btn--block" data-action="hardship-cancel">Cancel the request (keep everything locked)</button>
       ${S.today >= h.availableOn ? `<form id="hardship-complete" data-mt><label class="field"><span>Type: ${esc(S.hardshipPhrase)}</span><input type="text" name="typed" autocomplete="off"></label><label class="check"><input type="checkbox" name="confirm"><span class="small">Release ${money(h.amountCents)} now.</span></label><button class="btn btn--danger btn--block" data-mt type="submit">Complete hardship release</button></form>` : ''}`
+    : blind ? '<p class="small muted">Hardship release needs amounts. Turn off Go Blind first (not possible while "stay blind until goal" holds).</p>'
     : `<p class="small">Chosen when this goal was created: an early release with a ${esc(g.hardship.coolingOffDays)}-day cooling-off period. Everything is logged and you can cancel during the wait.</p>
       <form id="hardship-form"><label class="field"><span>Amount ($)</span><input type="number" name="amount" min="1" step="1" max="${esc(t.vaultCents / 100)}"></label>
       <label class="field"><span>Type: ${esc(S.hardshipPhrase)}</span><input type="text" name="typed" autocomplete="off"></label>
@@ -308,7 +384,7 @@ function viewVault() {
       <button class="btn btn--block" data-mt type="submit">Request hardship release</button></form>`}
   </section>` : ''}
   <a class="btn btn--ghost btn--block" href="#/rollover">Preview Roll Over &amp; Relock</a>` : ''}
-  ${S.cycles.length || S.withdrawals.length ? `<div class="section-title">History</div><div class="card"><table class="mini">
+  ${blind && (S.cycles.length || S.withdrawals.length) ? `<div class="section-title">History</div>${hiddenCard('History', `${S.cycles.length} past cycle(s): amounts hidden.`)}` : S.cycles.length || S.withdrawals.length ? `<div class="section-title">History</div><div class="card"><table class="mini">
     ${S.cycles.map((c) => `<tr><td>Cycle ${c.cycle}: ${esc(c.name)} ${money0(c.targetCents)} · ${esc(c.mode)}</td><td>${c.withdrawCents ? `−${money0(c.withdrawCents)}` : ''} → ${c.nextTargetCents ? money0(c.nextTargetCents) : 'closed'}</td></tr>`).join('')}
     ${S.withdrawals.map((w) => `<tr><td>${short(w.clockDate)} ${esc(w.kind.replace(/_/g, ' '))} (simulated)</td><td>−${money(w.amountCents)}</td></tr>`).join('')}</table></div>` : ''}`;
 }
@@ -320,6 +396,7 @@ function rolloverCalc({ mode, vault, withdraw, target }) {
   return { w, remaining, additional: mode === 'full' && !target ? null : target - remaining };
 }
 function viewRollover() {
+  if (BLIND()) return `<h1>Roll Over &amp; Relock</h1>${hiddenCard('Rollover preview', 'The rollover preview is all amounts, so it is hidden while Go Blind is on. When the goal is reached the vault unlocks, amounts show again, and the wizard opens here.')}`;
   const g = S.goal, t = S.totals, st = S.settings.rollover;
   const unlocked = g?.status === 'unlocked';
   const vault = unlocked ? t.vaultCents : (g?.targetCents || 300000);
@@ -368,18 +445,24 @@ function viewInbox() {
 
 // ---------------- Bot ----------------
 let simBotLast = null; // last simulated-bot response (demo only)
-const SIM_BOT_LABELS = [
-  ['status', 'Read status'], ['propose_raise', 'Propose +$500 goal'], ['request_resume', 'Ask to resume deposits'], ['pause', 'Pause deposits'],
-  ['prepare_rollover', 'Prepare rollover 1000 → 4000'], ['try_unlock', 'Try to unlock (refused)'], ['try_lower', 'Try to lower goal (refused)'],
+const SIM_BOT_LABELS = () => [
+  ['status', 'Read status'], ['propose_raise', BLIND() ? 'Propose a higher goal' : 'Propose +$500 goal'], ['request_resume', 'Ask to resume deposits'], ['pause', 'Pause deposits'],
+  ['prepare_rollover', BLIND() ? 'Prepare a rollover' : 'Prepare rollover 1000 → 4000'], ['blind_on', 'Turn Go Blind on'], ['try_unlock', 'Try to unlock (refused)'], ['try_lower', 'Try to lower goal (refused)'],
   ['try_disable_hard_lock', 'Try to turn off Hard Lock (refused)'], ['try_production', 'Try production mode (refused)'], ['try_delete_audit', 'Try to delete audit (refused)'],
+  ['try_blind_off', 'Try to turn Go Blind off (refused)'], ['try_reveal_amounts', 'Try to read hidden amounts (refused)'],
 ];
+function simBotSummary(r) {
+  const b = r.body || {};
+  const text = b.message || b.approval?.summary || (b.goal && b.balances ? (b.blindMode ? `Goal "${b.goal.name}" · ${b.goal.status} · goal reached: ${b.goalReached ? 'yes' : 'no'} · deposits ${b.schedule?.status || 'none'} · amounts hidden` : `Goal ${money0(b.goal.targetCents)} · settled ${money(b.balances?.settledLockedCents)}`) : '') || b.note || b.error || 'OK';
+  return `${esc(text)}${b.blindMode ? ' <span class="chip chip--blind" data-testid="sim-bot-blindmode">blindMode: true</span>' : ''}`;
+}
 function viewSimBot() {
   return `<section class="card card--gold" data-testid="sim-bot">
     <h2>Simulated bot (Grok)</h2>
-    <p class="small muted">Tap to make the bot call the real bot API with its own key. Proposals land in your Inbox; forbidden requests are refused and logged.</p>
-    <div class="sim-bot-grid">${SIM_BOT_LABELS.map(([a, l]) => `<button class="btn btn--sm ${a.startsWith('try_') ? 'btn--danger' : ''}" data-action="simbot" data-bot="${a}" data-testid="simbot-${a}">${esc(l)}</button>`).join('')}</div>
+    <p class="small muted">Tap to make the bot call the real bot API with its own key. Proposals land in your Inbox; forbidden requests are refused and logged.${BLIND() || S.blind?.on ? ' Go Blind is on: every bot response has amounts removed (<code>blindMode: true</code>). The bot can turn Go Blind on but never off.' : ''}</p>
+    <div class="sim-bot-grid">${SIM_BOT_LABELS().map(([a, l]) => `<button class="btn btn--sm ${a.startsWith('try_') ? 'btn--danger' : ''}" data-action="simbot" data-bot="${a}" data-testid="simbot-${a}">${esc(l)}</button>`).join('')}</div>
     <button class="btn btn--sm btn--ghost btn--block" data-mt data-action="simbot" data-bot="new_key" data-testid="simbot-new_key">${S.simBot?.hasKey ? 'Give the bot a fresh key' : 'Give the bot a key'}</button>
-    ${simBotLast ? `<div class="sim-bot-out" data-testid="sim-bot-out"><span class="chip chip--s${esc(simBotLast.httpStatus)}">${esc(simBotLast.httpStatus)}</span> <code>${esc(simBotLast.action)}</code><div class="small muted">${esc(simBotLast.body?.message || simBotLast.body?.approval?.summary || simBotLast.body?.note || (simBotLast.body?.goal ? `Goal ${money0(simBotLast.body.goal.targetCents)} · settled ${money(simBotLast.body.balances?.settledLockedCents)}` : '') || simBotLast.body?.error || 'OK')}</div></div>` : ''}
+    ${simBotLast ? `<div class="sim-bot-out" data-testid="sim-bot-out"><span class="chip chip--s${esc(simBotLast.httpStatus)}">${esc(simBotLast.httpStatus)}</span> <code>${esc(simBotLast.action)}</code><div class="small muted">${simBotSummary(simBotLast)}</div></div>` : ''}
   </section>`;
 }
 function viewBot() {
@@ -406,29 +489,36 @@ function viewBot() {
 function viewSettings() {
   const s = S.settings;
   const num = (name, label, val, attrs = '') => `<label class="field"><span>${label}</span><input type="number" name="${name}" value="${esc(val)}" ${attrs}></label>`;
+  const hid = (label) => `<label class="field"><span>${label.replace(' ($)', '')}</span><input type="text" value="Hidden" readonly aria-readonly="true" class="input--hidden"></label>`;
+  const numC = (name, label, val, attrs = '') => (BLIND() ? hid(label) : num(name, label, val, attrs));
   const tog = (name, label, val, sub = '') => `<label class="toggle-row"><span>${label}${sub ? `<br><span class="small muted">${sub}</span>` : ''}</span><input type="checkbox" name="${name}" ${val ? 'checked' : ''}></label>`;
   return `
   <h1>Settings</h1>
-  <p class="small muted">Defaults for new goals and the engine. Changing settings never loosens a goal that is already locked.</p>
+  <p class="small muted">Defaults for new goals and the engine. Changing settings never loosens a goal that is already locked.${BLIND() ? ' Amount fields are hidden while Go Blind is on and are left unchanged when you save.' : ''}</p>
   <form class="card" id="settings-form" data-testid="settings-form">
     <h2>New goals</h2>
-    <div class="grid2">${num('goal.targetCents', 'Default goal ($)', s.goal.targetCents / 100, 'min="1" step="1"')}${num('goal.lockDays', 'Lock period (days)', s.goal.lockDays, 'min="1" max="3650"')}</div>
-    <label class="field"><span>Default milestones ($)</span><input type="text" name="goal.milestonesCents" value="${esc(s.goal.milestonesCents.map((c) => c / 100).join(', '))}"></label>
+    <div class="grid2">${numC('goal.targetCents', 'Default goal ($)', s.goal.targetCents / 100, 'min="1" step="1"')}${num('goal.lockDays', 'Lock period (days)', s.goal.lockDays, 'min="1" max="3650"')}</div>
+    ${BLIND() ? hid('Default milestones ($)') : `<label class="field"><span>Default milestones ($)</span><input type="text" name="goal.milestonesCents" value="${esc(s.goal.milestonesCents.map((c) => c / 100).join(', '))}"></label>`}
     ${tog('hardLock.defaultOn', 'Hard Lock on for new goals', s.hardLock.defaultOn, 'Recommended. No early release path at all.')}
     ${num('hardship.coolingOffDaysDefault', 'Hardship cooling-off default (days, only for non-Hard-Lock goals)', s.hardship.coolingOffDaysDefault, 'min="7" max="365"')}
     <h2 data-mt>Deposits &amp; overdraft protection</h2>
-    <div class="grid2">${num('contribution.amountCents', 'Default deposit ($)', s.contribution.amountCents / 100, 'min="1" step="0.01"')}${num('safety.bufferCents', 'Safety buffer ($)', s.safety.bufferCents / 100, 'min="0" step="1"')}</div>
+    <div class="grid2">${numC('contribution.amountCents', 'Default deposit ($)', s.contribution.amountCents / 100, 'min="1" step="0.01"')}${numC('safety.bufferCents', 'Safety buffer ($)', s.safety.bufferCents / 100, 'min="0" step="1"')}</div>
     <label class="field"><span>If the balance is too low</span><select name="safety.onInsufficientFunds"><option value="defer" ${s.safety.onInsufficientFunds === 'defer' ? 'selected' : ''}>Defer and retry next business day</option><option value="skip" ${s.safety.onInsufficientFunds === 'skip' ? 'selected' : ''}>Skip that deposit</option></select></label>
     <div class="grid2">${num('safety.deferMaxBusinessDays', 'Retry for (business days)', s.safety.deferMaxBusinessDays, 'min="0" max="10"')}${num('safety.pauseAfterReturns', 'Pause after N returns', s.safety.pauseAfterReturns, 'min="1" max="10"')}</div>
     <h2 data-mt>Unlock code &amp; rollover</h2>
     <div class="grid2">${num('unlock.codeExpiryDays', 'Code expires after (days)', s.unlock.codeExpiryDays, 'min="1" max="365"')}${num('unlock.maxAttempts', 'Wrong tries allowed', s.unlock.maxAttempts, 'min="1" max="20"')}</div>
-    <div class="grid2">${num('rollover.defaultWithdrawCents', 'Rollover: default withdraw ($)', s.rollover.defaultWithdrawCents / 100, 'min="0" step="1"')}${num('rollover.defaultNewTargetCents', 'Rollover: default new goal ($)', s.rollover.defaultNewTargetCents / 100, 'min="1" step="1"')}</div>
+    <div class="grid2">${numC('rollover.defaultWithdrawCents', 'Rollover: default withdraw ($)', s.rollover.defaultWithdrawCents / 100, 'min="0" step="1"')}${numC('rollover.defaultNewTargetCents', 'Rollover: default new goal ($)', s.rollover.defaultNewTargetCents / 100, 'min="1" step="1"')}</div>
+    <h2 data-mt>Benefits guard</h2>
+    ${tog('benefits.receivesSSI', 'I receive SSI', s.benefits?.receivesSSI, 'Shows a warning (with no numbers, so it works in Go Blind too) when settled savings get close to or over the SSI resource limit.')}
+    <div class="grid2">${numC('benefits.resourceLimitCents', 'Resource limit ($)', (s.benefits?.resourceLimitCents ?? 200000) / 100, 'min="0" step="1"')}${num('benefits.warnAtPercent', 'Warn at (percent of the limit)', s.benefits?.warnAtPercent ?? 80, 'min="50" max="100"')}</div>
     <h2 data-mt>Notifications</h2>
     ${tog('notifications.inApp', 'In-app banners', s.notifications.inApp)}${tog('notifications.console', 'Server log', s.notifications.console)}${tog('notifications.webhook', 'Webhook (NOTIFY_WEBHOOK_URL in .env)', s.notifications.webhook, 'Never includes unlock codes. Push/email/SMS can be added as notifier plugins.')}
     <h2 data-mt>Bot</h2>
     <div class="grid2">${num('bot.rateLimitPerMinute', 'Calls per minute per key', s.bot.rateLimitPerMinute, 'min="1" max="600"')}${num('bot.approvalExpiryDays', 'Requests expire after (days)', s.bot.approvalExpiryDays, 'min="1" max="30"')}</div>
     <button class="btn btn--gold btn--block" data-mt type="submit">Save settings</button>
   </form>
+  <div class="section-title">Go Blind</div>
+  ${blindCard()}
   <div class="section-title">Go-live gate (all unmet)</div>
   <div class="card" data-testid="golive">${S.goLiveGates.map((g) => `<div class="gate"><span class="gate__x">✕</span><span><strong>${esc(g.label)}</strong><br><span class="muted small">${esc(g.why)}</span></span></div>`).join('')}</div>
   <div class="card small muted">Extension points: notifiers (<code>server/notifiers</code>), bank providers (<code>server/providers</code>), pre-deposit rules (<code>server/rules</code>: ${esc(S.rules.join(', '))}). See <code>docs/EXTENDING.md</code>.</div>`;
@@ -462,7 +552,7 @@ function viewBank() {
       <li><strong>Don't install that bank's app</strong> on your phone. Fewer ways in = fewer impulse withdrawals.</li>
       <li><strong>Bank-enforced penalties or delays:</strong> a CD (early-withdrawal penalty) or a withdrawal-hold account such as Fort Knox-style savings (you schedule withdrawals in advance).</li>
       <li><strong>Sealed envelope:</strong> optionally give the savings bank's login to a trusted person in a sealed envelope, and don't keep a copy.</li>
-      <li><strong>If you get SSI:</strong> an ABLE account can hold savings without counting toward the $2,000 SSI limit (up to $100,000). Check with SSA or a benefits counselor.</li>
+      <li><strong>If you get SSI:</strong> an ABLE account can hold savings without counting toward the SSI resource limit${BLIND() ? '' : ' ($2,000; ABLE balances up to $100,000 are excluded)'}. Check with SSA or a benefits counselor.</li>
     </ol>
   </section>
   ${logged ? '' : '<a class="btn btn--block" href="#/">Back</a>'}`;
@@ -476,7 +566,7 @@ function viewMore() {
     <a href="#/authorize">Authorize <small>${esc(S.authorization?.status || 'none')}</small></a>
     <a href="#/rollover">Roll Over &amp; Relock</a>
     <a href="#/bot">AI bot <small>keys &amp; activity</small></a>
-    <a href="#/settings">Settings</a>
+    <a href="#/settings">Settings <small>${S.blind?.on ? 'Go Blind on' : 'incl. Go Blind'}</small></a>
     <a href="#/bank" data-testid="more-emergency">Emergency stop &amp; your bank</a>
     <a href="#/log">Log <small>audit trail</small></a>
   </nav>${S.simulation ? '<button class="btn btn--ghost btn--block" data-action="demo-wipe" data-testid="demo-wipe">Start over (erase this browser\'s demo data)</button>' : '<button class="btn btn--ghost btn--block" data-action="logout">Lock the app (log out)</button>'}`;
@@ -617,6 +707,7 @@ function scheduleFromForm(f) {
 const dollarsList = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => Math.round(Number(x) * 100)).filter((x) => x > 0);
 function wirePlan() {
   const gf = $('#goal-form'), sf = $('#schedule-form');
+  if (!sf) return;
   if (gf) {
     gf.hardLock.onchange = () => { $('[data-hardship]', gf).hidden = gf.hardLock.checked; };
     gf.onsubmit = (e) => {
@@ -666,7 +757,7 @@ function wireAuthorize() {
 }
 
 function wireRollover() {
-  const f = $('#rollover-form'); if (!f) return;
+  const f = $('#rollover-form'); if (!f || !f.mode) return;
   const g = S.goal, unlocked = g?.status === 'unlocked';
   const vault = unlocked ? S.totals.vaultCents : (g?.targetCents || 300000);
   const update = () => {
@@ -762,6 +853,9 @@ document.addEventListener('click', async (e) => {
   if (a === 'revoke-key') act(() => api('/api/bot-keys/revoke', { id: el.dataset.id }), 'Key revoked');
   if (a === 'emergency-stop') { if (!$('#stop-confirm').checked) return toast('Tick the box to confirm.', true); act(() => api('/api/emergency/stop', { confirm: true }), 'Emergency stop: deposits paused, bot keys revoked. Vault unchanged.'); }
   if (a === 'logout') act(() => api('/api/auth/logout', {}), 'App locked');
+  if (a === 'blind-on-open') openBlindOn();
+  if (a === 'blind-off-open') openBlindOff();
+  if (a === 'blind-add-stay') { if (confirm('Stay blind until the goal is reached? After this, Go Blind cannot be turned off at all until the vault unlocks, not even with the passcode.')) act(() => api('/api/blind/on', { confirm: true, stayUntilGoal: true }), 'Staying blind until the goal is reached.'); }
   if (a === 'simbot') { const r = await act(() => api('/api/demo/bot', { action: el.dataset.bot })); if (r) { simBotLast = r; render(); } }
   if (a === 'demo-wipe') { if (confirm('Erase all demo data in this browser and start over?')) { await act(() => api('/api/demo/wipe', {}), 'Demo reset'); location.hash = '#/'; } }
 });

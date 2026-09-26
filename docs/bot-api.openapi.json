@@ -592,6 +592,102 @@
           }
         }
       }
+    },
+    "/bot/v1/blind/on": {
+      "post": {
+        "summary": "Turn Go Blind ON (hide all amounts)",
+        "description": "Safe direction only. Hides every dollar amount from the user's app AND from all bot responses. Body: `{\"stayUntilGoal\": false}` (bots may NOT choose stay-until-goal; only the user can, 403). If the static demo has no Go Blind passcode yet, returns 409 `blind_passcode_needed`.\n\nWhile Go Blind is on, every bot response carries `blindMode: true`, all `*Cents` fields and progress values are `null`, and money text is replaced with `[hidden]`. Statuses, dates, `goalReached` and `benefitsAlert` (level only) are still returned.\n\nRequired scope: `pause`.",
+        "security": [
+          {
+            "botKey": [
+              "pause"
+            ]
+          }
+        ],
+        "x-scope": "pause",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "stayUntilGoal": {
+                    "type": "boolean",
+                    "description": "Must be false/absent for bots."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/blind/off": {
+      "post": {
+        "summary": "Turn Go Blind OFF: always refused for bots",
+        "description": "Always returns 403 `forbidden_for_bot` and is written to the audit log. Only the user can turn Go Blind off, with the passcode (and never while \"stay blind until goal\" holds).\n\nRequired scope: `read` (any key; always refused).",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -15,7 +15,8 @@
     "reset-passcode": "node scripts/reset-passcode.js",
     "test:e2e": "python3 test/e2e_mobile.py",
     "check:plaid": "node scripts/check-plaid.js",
-    "bot": "node bot-cli.js"
+    "bot": "node bot-cli.js",
+    "test:e2e:blind": "python3 test/e2e_blind.py server"
   },
   "dependencies": {
     "plaid": "^47.0.0"

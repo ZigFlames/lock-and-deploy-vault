@@ -80,6 +80,19 @@ There is **no emergency withdrawal or early-unlock path in the app**. The vault 
 
 **Optional hardship release** (off by default). It exists only for a goal created **with Hard Lock off**, and it can only be chosen while the goal is a draft (before you authorize deposits). It can never be added later. Rules: a cooling-off period (default **30 days**, minimum 7) from the request, typing the phrase `I UNDERSTAND THIS BREAKS MY LOCK`, cancellable at any time during the wait, and every step logged (`hardship_requested`, `hardship_cancelled`, `hardship_released`). **With Hard Lock on, this option does not exist.**
 
+## Go Blind (hide all amounts)
+
+A switch for when seeing the balance is the temptation. Home → **Go Blind** (also in Settings). Same idea as Hard Lock: it's easy to tighten and hard to loosen.
+
+- **When it's on:** the app shows **no dollar amounts anywhere**: total saved, amount to go, per-goal balances, deposit amounts, pending/settled, progress ring/bars/percentages, projected finish, history, rollover preview, the settings money fields, and the sandbox panel's mock balance. In their place you see "Hidden · Go Blind on".
+  - **Still shown:** the closed lock, the goal name, whether deposits are running or paused, the next deposit **date**, Pause/Resume, the approvals Inbox, Emergency stop, and the **goal-reached banner**. Once the vault unlocks, amounts come back for the unlock code, the withdrawal and Roll Over & Relock.
+  - The server does the hiding, not just the screen. While Go Blind is on, `/api/state` and every `/api` response have `*Cents`/progress fields set to `null` and money text replaced with `[hidden]` (`server/blind.js`). Error messages are scrubbed too.
+- **Turning it on:** one tap plus a confirm. Optional **Stay blind until goal** (can only be chosen when turning it on, or added later; it can never be removed mid-goal). When chosen, Go Blind **cannot be turned off at all until the vault unlocks**. There's no passcode override (423 `blind_until_goal`), and trying to remove it gets 423 `lock_loosening_blocked`.
+- **Turning it off:** needs the **app passcode** (server version) or the **Go Blind passcode** (static demo, see below). After 5 wrong tries it locks for 15 minutes (429), and every attempt is logged. **Sandbox reset** and the demo's **Start over** are refused while Go Blind is on, so they can't be used as a back door.
+- **Bot:** while Go Blind is on, **every** `/bot/v1` response is redacted (amounts `null`, money text `[hidden]`) and carries `blindMode: true`. The bot still sees statuses, dates, `goalReached` and the benefits-alert level. A bot **can turn Go Blind on** (`POST /bot/v1/blind/on`, scope `pause`). It can't choose "stay blind until goal" (403). It can **never turn it off** (`POST /bot/v1/blind/off` always returns 403 `forbidden_for_bot`). Request types `blind_off`, `disable_blind`, `remove_stay_blind`, `reveal_amounts`, `show_amounts` and `read_hidden_amounts` are refused and logged.
+- **Benefits guard (works while blind):** Settings → *Benefits guard* → **I receive SSI**, a resource limit (default **$2,000**) and "warn at" (default **80 %**). When **settled** savings reach the warning level, Home shows a banner with **no numbers**: "Your savings are getting close to the SSI resource limit. Consider an ABLE account or talk to SSA." Over the limit, it says so, also without numbers. The bot can't change these settings. The overdraft buffer keeps working as before, silently.
+- **Key events** (More → Log) record `blind_on`, `blind_stay_until_goal_added`, `blind_off_failed`, `blind_off_lockout`, `blind_off_refused`, `blind_off` and `blind_passcode_set`, with no amounts shown while blind.
+
 ## Emergency stop & your bank account
 
 - **Emergency stop** (More → Emergency stop & your bank; user only, the bot can't trigger or disable it): **pauses all future deposits and revokes every bot key** (and cancels pending bot approvals). It **never unlocks the vault or releases money**. The button says "Emergency stop (does not unlock)". Resume deposits from Transfers when ready.
@@ -105,6 +118,8 @@ The user creates a key in **More → Bot** (shown once, stored as SHA-256). Scop
 | `POST /bot/v1/goals/propose` | propose | Creates an approval request (202) |
 | `POST /bot/v1/rollovers/prepare` | propose | Prepares a rollover for you to confirm with your code (202) |
 | `POST /bot/v1/schedule/pause` | pause | Pauses future deposits immediately (safe direction) |
+| `POST /bot/v1/blind/on` | pause | Turns Go Blind on (safe direction). All bot responses are then redacted with `blindMode: true` |
+| `POST /bot/v1/blind/off` | any | Always 403: only the user can turn Go Blind off, with the passcode |
 | `POST /bot/v1/requests` | request | Resume, schedule change, funding-account change, settings change, withdrawal (only after unlock, needs your code) → approval (202). Unlock/bypass/production/lower-goal types → 403 |
 
 ```bash
@@ -119,6 +134,7 @@ npm run bot -- status
 npm run bot -- propose-goal --target 3500 --reason "aim a bit higher"
 npm run bot -- prepare-rollover --withdraw 1000 --new-target 4000
 npm run bot -- pause
+npm run bot -- blind-on      # hide amounts; bots can never turn it off
 npm run bot -- request resume_schedule --reason "funds look fine"
 ```
 
@@ -126,7 +142,7 @@ Full schema: [`docs/bot-api.openapi.json`](docs/bot-api.openapi.json).
 
 ## Settings
 
-Defaults live in [`config/default-settings.json`](config/default-settings.json); your overrides are saved in the data file (More → Settings, or `POST /api/settings` with nested JSON such as `{"safety":{"bufferCents":15000}}`). Every key is validated (`server/settings.js`), unknown keys are rejected. Settings are **defaults for new goals**: they never loosen a locked goal. Not settings on purpose: provider/production mode (env + code only), emergency stop, the audit log. The bot can never change `hardLock.defaultOn`, hardship minimums, unlock limits or its own rate limit.
+Defaults live in [`config/default-settings.json`](config/default-settings.json); your overrides are saved in the data file (More → Settings, or `POST /api/settings` with nested JSON such as `{"safety":{"bufferCents":15000}}`). Every key is validated (`server/settings.js`), unknown keys are rejected. Settings are **defaults for new goals**: they never loosen a locked goal. Not settings on purpose: provider/production mode (env + code only), emergency stop, the audit log. The bot can never change `hardLock.defaultOn`, hardship minimums, unlock limits, the benefits guard or its own rate limit. Go Blind is **not** a setting: it has its own endpoints (`/api/blind/on`, `/api/blind/off`) and rules.
 
 | Group | Keys (default) |
 |---|---|
@@ -138,6 +154,7 @@ Defaults live in [`config/default-settings.json`](config/default-settings.json);
 | rollover | defaultWithdrawCents (100000), defaultNewTargetCents (400000), fullWithdrawal (close) |
 | notifications | console (true), inApp (true), webhook (false) |
 | bot | rateLimitPerMinute (30), approvalExpiryDays (7) |
+| benefits | receivesSSI (false), resourceLimitCents (200000), warnAtPercent (80). Bot can't change these |
 | mock | fundingBalanceCents (150000) |
 
 ## Switch to Plaid Sandbox
@@ -234,7 +251,7 @@ server/
 public/               mobile-first UI (index.html, css/styles.css, js/app.js, icons/)
 scripts/              tick.js, reset-passcode.js, check-plaid.js
 bot-cli.js            shell client for the bot API
-test/                 node:test suites + Playwright mobile pass (e2e_mobile.py)
+test/                 node:test suites + Playwright phone-size passes (e2e_mobile.py, e2e_static.py, e2e_blind.py)
 docs/                 RESEARCH, EMERGENCY_ACCESS, SECRETS, EXTENDING, STATIC_DEMO, bot-api.openapi.json
 demo/                 browser-only PWA build (src/browser-server.js + shims, static/, build.mjs)
 screenshots/          390x844 screenshots from the headless run
@@ -242,11 +259,16 @@ screenshots/          390x844 screenshots from the headless run
 
 ## Tests
 ```bash
-npm test               # 60 node:test tests: API, production guard, Plaid adapter (stubbed client), schedule math,
-                       # engine (idempotency, balance buffer, returns), vault/Hard Lock/loosening/hardship/rollover, bot API
+npm test               # 71 node:test tests: API, production guard, Plaid adapter (stubbed client), schedule math,
+                       # engine (idempotency, balance buffer, returns), vault/Hard Lock/loosening/hardship/rollover, bot API,
+                       # Go Blind (passcode off + lockout, stay-until-goal, bot redaction/refusal, SSI alert while blind,
+                       # demo PBKDF2 passcode)
 npm run test:e2e       # Playwright + system Chrome at 390x844; starts its own server; writes screenshots/ and test/last-e2e.json
+npm run test:e2e:blind # Go Blind at 390x844 on the server build: DOM-text scan for '$'/money digits on every screen,
+                       # SSI alert, passcode off, stay-blind-until-goal, unlock still shows (test/e2e_blind.py)
+python3 test/e2e_blind.py static https://zigflames.com/lock-and-deploy-vault/   # same checks against the static demo
 ```
-- Screenshots (390x844, from the e2e run): `screenshots/01-link-accounts.png`, `02-schedule-setup`, `03-pending-transfers`, `04-paused`, `05-dashboard-pending-vs-settled`, `06-milestone-unlocked-code`, `07-rollover-wizard`, `08-approvals-inbox`, `09-bot-activity-log`, `10-emergency-access`, `11-vault-hard-lock`, `12-stronger-lock-at-bank`.
+- Screenshots (390x844, from the e2e run): `screenshots/01-link-accounts.png`, `02-schedule-setup`, `03-pending-transfers`, `04-paused`, `05-dashboard-pending-vs-settled`, `06-milestone-unlocked-code`, `07-rollover-wizard`, `08-approvals-inbox`, `09-bot-activity-log`, `10-emergency-access`, `11-vault-hard-lock`, `12-stronger-lock-at-bank`, `13-static-demo-live`; Go Blind: `14-blind-dashboard`, `15-blind-off-passcode`, `16-ssi-alert-blind` (server), `17-static-blind-dashboard`, `18-static-blind-bot`, `19-static-blind-off-passcode` (live static demo).
 - **Not verified:** live calls to Plaid Sandbox (no keys were available), the real Plaid Link iframe, and the webhook notifier against a real endpoint. Run `npm run check:plaid` once you have Sandbox keys.
 
 ## Limitations

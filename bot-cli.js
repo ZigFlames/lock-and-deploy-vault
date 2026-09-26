@@ -11,6 +11,7 @@
 //   node bot-cli.js propose-goal --target 3500 [--name "Mattress"] [--release 2027-12-31] [--milestones 1000,2000] [--reason "..."]
 //   node bot-cli.js prepare-rollover --withdraw 1000 --new-target 4000 [--mode partial|full|raise] [--full-action close|restart]
 //   node bot-cli.js pause
+//   node bot-cli.js blind-on          (turn Go Blind ON; bots can never turn it off)
 //   node bot-cli.js request <type> [--amount 50] [--json '{"...":...}'] [--reason "..."]
 //
 // Dollar flags are dollars (converted to cents). Output is JSON. Exit code 0 on 2xx, 1 otherwise.
@@ -26,7 +27,7 @@ function flags(args) {
   return out;
 }
 const cents = (d) => (d === undefined ? undefined : Math.round(Number(d) * 100));
-const usage = () => { console.error('Usage: node bot-cli.js status|goals|transfers|schedule|approvals|activity|propose-goal|prepare-rollover|pause|request <type>\nSee the header of bot-cli.js for flags.'); process.exit(2); };
+const usage = () => { console.error('Usage: node bot-cli.js status|goals|transfers|schedule|approvals|activity|propose-goal|prepare-rollover|pause|blind-on|request <type>\nSee the header of bot-cli.js for flags.'); process.exit(2); };
 
 async function call(method, path, body) {
   const res = await fetch(BASE + path, { method, headers: { Authorization: `Bearer ${KEY}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -47,6 +48,7 @@ else if (cmd === 'propose-goal') {
   const body = { mode: f.mode || (f.withdraw && Number(f.withdraw) > 0 ? 'partial' : 'raise'), withdrawCents: cents(f.withdraw || 0), newTargetCents: cents(f['new-target']), fullAction: f['full-action'] };
   await call('POST', '/bot/v1/rollovers/prepare', JSON.parse(JSON.stringify(body)));
 } else if (cmd === 'pause') await call('POST', '/bot/v1/schedule/pause', {});
+else if (cmd === 'blind-on') await call('POST', '/bot/v1/blind/on', {});
 else if (cmd === 'request') {
   const type = f._[0]; if (!type) usage();
   const payload = f.json ? JSON.parse(f.json) : f.amount ? { amountCents: cents(f.amount) } : {};

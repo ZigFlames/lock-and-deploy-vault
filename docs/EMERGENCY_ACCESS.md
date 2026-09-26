@@ -21,6 +21,9 @@ Only for a goal created with Hard Lock **off**, and only chosen while the goal i
 4. After the wait, confirm again with the typed phrase. The released amount is recorded (simulated in this prototype). The rest stays locked.
 Every step is in the audit log: `hardship_requested`, `hardship_cancelled`, `hardship_released`, `hardship_refused`.
 
+### Go Blind (hide all amounts)
+Go Blind hides every dollar amount from you and from the bot, so you're not tempted to check. The lock is unchanged; only what you see changes. What stays visible, and every Emergency stop, Pause/Resume and Inbox control, keeps working. Turning it off needs your passcode (5 tries, then a 15-minute lockout). If you chose **stay blind until goal**, it can't be turned off at all until the vault unlocks, and the goal-reached banner still appears. Sandbox reset and "Start over" are refused while it's on. The **benefits guard** (I receive SSI) still warns you, without numbers, when settled savings get close to the SSI resource limit. Details: README → Go Blind.
+
 ## 2. Emergency stop: pause, never unlock
 
 **More → Emergency stop & your bank → "Emergency stop (does not unlock)"**. User only; the bot can't press or disable it.

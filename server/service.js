@@ -14,9 +14,10 @@ import { appendAudit, verifyAudit } from './audit.js';
 import { runRules, listRules } from './rules/index.js';
 import { newUnlockCode, normalizeCode, scryptHash, scryptVerify, sha256hex, randomToken } from './secrets.js';
 import { evaluateGates, unmetGates } from './golive.js';
+import { redactDeep, redactText, emptyBlind, BLIND_MAX_FAILURES, BLIND_LOCKOUT_MS, BENEFITS_MESSAGES } from './blind.js';
 
 // Security-relevant events always listed on the Log screen, never pushed out by routine pull/bot noise.
-const KEY_AUDIT = /^(authorization_|emergency_stop|lock_loosening|hardship_|goal_|vault_|unlock_code_|rollover_|settings_|real_transfer|withdrawal_|bot_key_|bot_forbidden|passcode_|login_failed|benefit_warning|approval_(approved|rejected))/;
+const KEY_AUDIT = /^(blind_|benefits_|authorization_|emergency_stop|lock_loosening|hardship_|goal_|vault_|unlock_code_|rollover_|settings_|real_transfer|withdrawal_|bot_key_|bot_forbidden|passcode_|login_failed|benefit_warning|approval_(approved|rejected))/;
 
 export class AppError extends Error { constructor(status, code, message, extra) { super(message); this.status = status; this.code = code; this.extra = extra; } }
 const SSI_LIMIT_CENTS = 200000;
@@ -32,6 +33,15 @@ export class Service {
   constructor({ store, key, config, notifier = null }) {
     this.store = store; this.key = key; this.config = config; this.provider = null; this.notifier = notifier;
     this.actor = 'system';
+    this.nowMs = () => Date.now(); // wall clock for rate limits (tests can override)
+    // Who can turn Go Blind OFF. Server: the app passcode (scrypt). The browser demo swaps in its own
+    // "Go Blind passcode" (PBKDF2 via WebCrypto) with needsSetup/setup.
+    this.blindAuth = {
+      kind: 'app_passcode',
+      needsSetup: () => false,
+      setup: null,
+      verify: async (passcode) => !!this.s.userAuth && scryptVerify(String(passcode || ''), this.s.userAuth.passcodeHash),
+    };
   }
   get s() { return this.store.state; }
   get settings() { return effectiveSettings(this.s.settings); }
@@ -624,6 +634,87 @@ export class Service {
   }
 
   // ---------- Emergency stop (user only): pause + revoke bot keys. Never unlocks or releases money. ----------
+  // ---------- Go Blind ----------
+  get blind() { if (!this.s.blind || typeof this.s.blind !== 'object') this.s.blind = emptyBlind(); return this.s.blind; }
+  /** "Stay blind until goal" is bound to the goal that was saving when it was chosen; it ends when that goal unlocks. */
+  blindStayActive() {
+    const b = this.blind, g = this.s.goal;
+    return !!(b.on && b.stayUntilGoal && g && g.id === b.stayGoalId && g.status === 'saving');
+  }
+  /** UI redaction: on while blind, except after the goal is reached (the unlock + withdrawal/rollover flow shows amounts). */
+  blindRedactUser() { return !!this.blind.on && this.s.goal?.status !== 'unlocked'; }
+  /** Bot redaction: always while blind is on. */
+  blindRedactBot() { return !!this.blind.on; }
+  redactForUser(out) { return this.blindRedactUser() ? redactDeep(out, { skip: ['blind', 'benefitsAlert'] }) : out; }
+  redactForBot(out) { return this.blindRedactBot() && out && typeof out === 'object' ? { ...redactDeep(out), blindMode: true } : out; }
+  redactErrorText(msg) { return this.blindRedactUser() ? redactText(msg) : msg; }
+  blindView() {
+    const b = this.blind, now = this.nowMs();
+    return { on: !!b.on, redacted: this.blindRedactUser(), stayUntilGoal: this.blindStayActive(), enabledAt: b.enabledAt, enabledBy: b.enabledBy,
+      lockedUntil: b.lockedUntil && b.lockedUntil > now ? new Date(b.lockedUntil).toISOString() : null,
+      triesLeft: BLIND_MAX_FAILURES - (b.failures || []).filter((t) => now - t < BLIND_LOCKOUT_MS).length,
+      passcodeKind: this.blindAuth.kind, needsPasscodeSetup: !!this.blindAuth.needsSetup() };
+  }
+  /** Turn Go Blind on (one tap + confirm), or tighten it with "stay blind until goal". Never loosens. */
+  async blindOn({ confirm, stayUntilGoal = false, passcode } = {}, { by = 'user' } = {}) {
+    const b = this.blind, g = this.s.goal;
+    if (confirm !== true) throw new AppError(400, 'confirm_required', 'Confirm turning on Go Blind.');
+    if (by !== 'user' && stayUntilGoal) throw new AppError(403, 'forbidden_for_bot', 'Only you can choose "stay blind until goal" (it cannot be undone until the goal is reached).');
+    if (b.on && b.stayUntilGoal && stayUntilGoal === false && this.blindStayActive()) {
+      this.audit('lock_loosening_refused', { attempted: ['remove stay-blind-until-goal'] });
+      throw new AppError(423, 'lock_loosening_blocked', '"Stay blind until goal" cannot be removed until the goal is reached.');
+    }
+    if (this.blindAuth.needsSetup()) {
+      if (by !== 'user') throw new AppError(409, 'blind_passcode_needed', 'The user has to set a Go Blind passcode (in the app) before Go Blind can be turned on.');
+      if (!/^\d{4,12}$/.test(String(passcode || ''))) throw new AppError(400, 'weak_passcode', 'Choose a Go Blind passcode of 4 to 12 digits.');
+      await this.blindAuth.setup(String(passcode));
+      this.audit('blind_passcode_set', { kind: this.blindAuth.kind });
+    }
+    const stay = !!stayUntilGoal && !!g && g.status === 'saving';
+    if (b.on) {
+      if (stay && !this.blindStayActive()) { b.stayUntilGoal = true; b.stayGoalId = g.id; this.audit('blind_stay_until_goal_added', { by, goal: g.name }); }
+      return this.blindView();
+    }
+    Object.assign(b, { on: true, stayUntilGoal: stay, stayGoalId: stay ? g.id : null, enabledAt: new Date().toISOString(), enabledBy: by });
+    this.audit('blind_on', { by, stayUntilGoal: stay, goal: g?.name || null });
+    return this.blindView();
+  }
+  /** Turn Go Blind off: needs the passcode, is rate-limited (5 wrong tries -> 15-minute lockout), and is impossible while "stay blind until goal" holds. */
+  async blindOff({ passcode } = {}) {
+    const b = this.blind, now = this.nowMs();
+    if (!b.on) return this.blindView();
+    if (this.blindStayActive()) {
+      this.audit('blind_off_refused', { reason: 'stay_until_goal' });
+      throw new AppError(423, 'blind_until_goal', 'You chose "stay blind until goal". Go Blind turns off only when the vault unlocks. There is no passcode override.');
+    }
+    if (b.lockedUntil && now < b.lockedUntil) {
+      this.audit('blind_off_refused', { reason: 'locked_out' });
+      throw new AppError(429, 'blind_locked_out', `Too many wrong passcodes. Try again after ${new Date(b.lockedUntil).toLocaleTimeString()}.`, { lockedUntil: new Date(b.lockedUntil).toISOString() });
+    }
+    if (!(await this.blindAuth.verify(passcode))) {
+      b.failures = (b.failures || []).filter((t) => now - t < BLIND_LOCKOUT_MS).concat(now);
+      const n = b.failures.length;
+      this.audit('blind_off_failed', { attempt: n });
+      if (n >= BLIND_MAX_FAILURES) {
+        b.lockedUntil = now + BLIND_LOCKOUT_MS; b.failures = [];
+        this.audit('blind_off_lockout', { minutes: BLIND_LOCKOUT_MS / 60_000 });
+        throw new AppError(429, 'blind_locked_out', 'Too many wrong passcodes. Go Blind stays on; try again in 15 minutes.', { lockedUntil: new Date(b.lockedUntil).toISOString() });
+      }
+      throw new AppError(401, 'bad_passcode', `Wrong passcode. ${BLIND_MAX_FAILURES - n} tries left before a 15-minute lockout.`, { triesLeft: BLIND_MAX_FAILURES - n });
+    }
+    Object.assign(b, { on: false, stayUntilGoal: false, stayGoalId: null, failures: [], lockedUntil: null });
+    this.audit('blind_off', {});
+    return this.blindView();
+  }
+  /** Benefits guard: a non-numeric alert that stays visible in Go Blind. Settled savings only. */
+  benefitsAlert() {
+    const b = this.settings.benefits;
+    if (!b?.receivesSSI) return null;
+    const v = this.totals().vaultCents;
+    const level = v >= b.resourceLimitCents ? 'over' : v >= Math.floor(b.resourceLimitCents * b.warnAtPercent / 100) ? 'near' : null;
+    return level ? { level, message: BENEFITS_MESSAGES[level] } : null;
+  }
+
   emergencyStop({ confirm } = {}) {
     if (confirm !== true) throw new AppError(400, 'confirm_required', 'Confirm the emergency stop.');
     const s = this.s.schedule;
@@ -778,6 +869,9 @@ export class Service {
       remainingCents: Math.max(0, g.targetCents - t.vaultCents), releaseDatePretty: prettyDate(g.releaseDate) };
   }
   view() {
+    return this.redactForUser(this.rawView());
+  }
+  rawView() {
     const today = this.today();
     const t = this.totals(); const g = this.s.goal; const s = this.s.schedule;
     const sv = this.scheduleView();
@@ -798,11 +892,13 @@ export class Service {
       transfers: this.s.transfers,
       audit: this.s.audit.slice(-150).reverse(), auditKey: this.s.audit.filter((e) => KEY_AUDIT.test(e.type)).slice(-60).reverse(), auditIntegrity: verifyAudit(this.s.audit), auditCount: this.s.audit.length,
       readiness: this.readiness(), settings: this.settings, rules: listRules(),
-      notifications: this.s.notifications.filter((n) => !n.dismissedAt).slice(0, 5),
+      // While blind, progress milestones are hidden (they'd reveal progress); the goal-reached banner still shows.
+      notifications: this.s.notifications.filter((n) => !n.dismissedAt && !(this.blindRedactUser() && n.type.startsWith('milestone'))).slice(0, 5),
       approvals: this.s.approvals.slice(0, 50), pendingApprovals: this.s.approvals.filter((a) => a.status === 'pending').length,
       botKeys: this.botKeysView(), botActivity: this.s.botActivity.slice(-100).reverse(),
       goLiveGates: evaluateGates(this.s),
       scheduleStatus: s?.status || null,
+      blind: this.blindView(), benefitsAlert: this.benefitsAlert(),
     };
   }
 }

@@ -12,13 +12,16 @@
 // What a bot can never do (enforced here AND by the user API requiring a session): see tokens/credentials,
 // unlock or bypass the lock, request a hardship release, loosen a locked goal, disable emergency controls,
 // switch to production, delete/hide audit entries or transactions.
+// Go Blind: while it is on, EVERY bot response has amounts nulled and money text replaced (blindMode: true).
+// A bot may turn Go Blind ON (safe direction) but can never turn it off or read the hidden amounts.
 import { AppError } from './service.js';
 import { sha256hex, safeEqualHex } from './secrets.js';
 import { validatePatch, BOT_FORBIDDEN_SETTINGS } from './settings.js';
 
 export const FORBIDDEN_REQUEST_TYPES = ['unlock', 'early_unlock', 'bypass_lock', 'hardship_release', 'disable_hard_lock', 'lower_goal',
   'switch_production', 'enable_real_money', 'disable_emergency', 'disable_emergency_stop', 'delete_audit', 'edit_audit', 'hide_transaction',
-  'delete_transaction', 'read_tokens', 'read_credentials', 'create_bot_key', 'raise_rate_limit_self'];
+  'delete_transaction', 'read_tokens', 'read_credentials', 'create_bot_key', 'raise_rate_limit_self',
+  'blind_off', 'disable_blind', 'turn_off_blind', 'remove_stay_blind', 'reveal_amounts', 'show_amounts', 'read_hidden_amounts'];
 export const REQUEST_TYPES = ['resume_schedule', 'schedule_change', 'change_funding_account', 'revoke_authorization', 'grant_authorization', 'settings_change', 'withdrawal'];
 
 const KEY_RE = /^ldbk_([a-f0-9]{16})\.([A-Za-z0-9_-]{43})$/;
@@ -53,6 +56,7 @@ export function createBotApi({ service, store }) {
       return { today: service.today(), sandbox: true, realMoneyEnabled: false, goal: goalView(service),
         balances: { settledLockedCents: t.vaultCents, pendingCents: t.pendingCents, returnedCents: t.returnedCents, withdrawnCents: t.withdrawalsCents },
         schedule: scheduleView(service), pendingApprovals: service.s.approvals.filter((a) => a.status === 'pending').length,
+        goalReached: service.s.goal?.status === 'unlocked', blindMode: service.blindRedactBot(), benefitsAlert: service.benefitsAlert()?.level || null,
         note: 'Balances: only SETTLED deposits count toward the lock. Pending is shown separately.' };
     } },
     'GET /bot/v1/goals': { scope: 'read', fn: () => ({ active: goalView(service), cycles: service.s.cycles.map((c) => pick(c, ['cycle', 'name', 'targetCents', 'reachedOn', 'closedOn', 'mode', 'withdrawCents', 'remainingCents', 'nextTargetCents'])) }) },
@@ -88,6 +92,11 @@ export function createBotApi({ service, store }) {
       return { httpStatus: 202, body: { preview, approval: approvalView(service.createApproval({ type: 'rollover', payload, summary, key })), next: preview.requiresUnlockCode ? 'The user must approve in the app and enter the unlock code.' : 'The user must approve in the app.' } };
     } },
     'POST /bot/v1/schedule/pause': { scope: 'pause', fn: () => ({ ...service.pause('bot'), note: 'Future deposits paused. Saved money and the lock are unchanged. Only the user can resume (or approve a resume request).' }) },
+    'POST /bot/v1/blind/on': { scope: 'pause', fn: async ({ body }) => ({ blind: await service.blindOn({ confirm: true, stayUntilGoal: !!body.stayUntilGoal }, { by: 'bot' }), note: 'Go Blind is on: amounts are hidden from the user and from you. Only the user can turn it off, with the passcode.' }) },
+    'POST /bot/v1/blind/off': { scope: 'read', fn: ({ key }) => {
+      service.audit('bot_forbidden_request', { type: 'blind_off', keyId: key.id });
+      throw new AppError(403, 'forbidden_for_bot', 'Only the user can turn Go Blind off, with the passcode. Bots never can.');
+    } },
     'POST /bot/v1/requests': { scope: 'request', fn: ({ body, key }) => {
       const type = String(body.type || '');
       if (FORBIDDEN_REQUEST_TYPES.includes(type)) {
@@ -173,11 +182,11 @@ export function createBotApi({ service, store }) {
       const status = out?.httpStatus || 200;
       const resBody = out?.httpStatus ? out.body : out;
       log(status, { summary: resBody?.approval ? `approval ${resBody.approval.type} ${resBody.approval.id}` : undefined });
-      return { status, body: resBody };
+      return { status, body: service.redactForBot(resBody) };
     } catch (e) {
       const status = e.status || 500;
       log(status, { error: e.code || 'error' });
-      return { status, body: { error: e.code || 'error', message: e.message, ...(e.extra || {}) } };
+      return { status, body: service.redactForBot({ error: e.code || 'error', message: e.message, ...(e.extra || {}) }) };
     } finally { service.actor = prevActor; }
   }
 
