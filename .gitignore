@@ -10,5 +10,6 @@ TEMP_DEMO_LINK.txt
 *.tmp
 db.lock
 .dev-token-key
+.sealed-login-key
 demo/dist/
 test/last-e2e*.json

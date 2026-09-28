@@ -12,9 +12,12 @@ This prototype is sandbox-only, but it is built so that no secret has to live in
 | Session cookie | Login | Random token, HttpOnly, SameSite=Strict. Stored server-side as a hash with expiry. |
 | Bot keys (`ldbk_<id>.<secret>`) | Created by you in More → Bot | Shown **once**; stored as **SHA-256**. Revocable; revoked by emergency stop and passcode reset. |
 | Unlock codes (`XXXX-XXXX-XXXX`) | Generated when the goal is reached | **scrypt hash** for verification. The plaintext is kept encrypted only until it is shown to you once, then deleted. Single use, expiry, attempt limit. |
+| `SEALED_LOGIN_KEY` / `SEALED_LOGIN_KEY_FILE` | You generate it (32 random bytes, base64) | Environment / `.env` or a 0600 file. Encrypts sealed logins (AES-256-GCM, `sl1` format). If empty, a dev key is created at `data/.sealed-login-key` (mode 0600, git-ignored). Static demo: a non-extractable WebCrypto key in the browser's IndexedDB. |
+| Sealed login values (the Current Savings login) | You generate or enter them in Seal my login | **Encrypted** in `data/db.json` (and drafts, which expire after 2 hours). Never in any API view, log or bot response; shown only after the unlock condition, to the user only. See `docs/SEALED_LOGIN.md`. |
+| Sync code (`ldbsync1.<channel>.<key>`, static demo) | Created in More → Assistant sync | In this browser's localStorage; given to the assistant once. The relay only ever stores ciphertext. See `docs/ASSISTANT_SYNC.md`. |
 | `NOTIFY_WEBHOOK_SECRET` | You choose it | Environment / `.env`. Signs webhook bodies (HMAC-SHA256, `X-LDB-Signature`). |
 
-Never stored anywhere: bank usernames or passwords, full account or routing numbers.
+Never stored for bank **linking**: bank usernames or passwords, full account or routing numbers. The one exception is a login you choose to seal (Seal my login), which is stored encrypted and never shown before its unlock condition.
 
 ## Options for supplying environment secrets (best to worst)
 The server reads plain environment variables, so any of these work without code changes:

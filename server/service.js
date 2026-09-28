@@ -15,11 +15,15 @@ import { runRules, listRules } from './rules/index.js';
 import { newUnlockCode, normalizeCode, scryptHash, scryptVerify, sha256hex, randomToken } from './secrets.js';
 import { evaluateGates, unmetGates } from './golive.js';
 import { redactDeep, redactText, emptyBlind, BLIND_MAX_FAILURES, BLIND_LOCKOUT_MS, BENEFITS_MESSAGES } from './blind.js';
+import { AppError } from './errors.js';
+import { SealedLogins } from './sealed.js';
+import { CARDS, CARD_STEP_CENTS, renderCard, speedUpCards, emptyCards } from './tips.js';
+import { MonthlyMoves } from './moves.js';
 
 // Security-relevant events always listed on the Log screen, never pushed out by routine pull/bot noise.
-const KEY_AUDIT = /^(blind_|benefits_|authorization_|emergency_stop|lock_loosening|hardship_|goal_|vault_|unlock_code_|rollover_|settings_|real_transfer|withdrawal_|bot_key_|bot_forbidden|passcode_|login_failed|benefit_warning|approval_(approved|rejected))/;
+const KEY_AUDIT = /^(blind_|benefits_|authorization_|emergency_stop|lock_loosening|hardship_|goal_|vault_|unlock_code_|rollover_|settings_|real_transfer|withdrawal_|bot_key_|bot_forbidden|passcode_|login_failed|benefit_warning|approval_(approved|rejected)|sealed_login_|lost_card_|tip_card_|deposit_raised|monthly_move_|sync_)/;
 
-export class AppError extends Error { constructor(status, code, message, extra) { super(message); this.status = status; this.code = code; this.extra = extra; } }
+export { AppError };
 const SSI_LIMIT_CENTS = 200000;
 const IN_FLIGHT = ['pending', 'posted'];
 const DISPUTE_CODES = ['R05', 'R07', 'R10', 'R11', 'R29']; // unauthorized / revoked: stop and review
@@ -33,7 +37,12 @@ export class Service {
   constructor({ store, key, config, notifier = null }) {
     this.store = store; this.key = key; this.config = config; this.provider = null; this.notifier = notifier;
     this.actor = 'system';
-    this.nowMs = () => Date.now(); // wall clock for rate limits (tests can override)
+    this.nowMs = () => Date.now(); // wall clock for rate limits and sealed-login unlock dates (tests can override)
+    // Seal my login: rules live in server/sealed.js. The cipher is plugged in by the host: Node crypto with a key from
+    // env / a secrets file (server/app.js), or WebCrypto with a device key (demo/src/browser-server.js).
+    this.sealed = new SealedLogins(this);
+    this.sealCipher = null;
+    this.moves = new MonthlyMoves(this);
     // Who can turn Go Blind OFF. Server: the app passcode (scrypt). The browser demo swaps in its own
     // "Go Blind passcode" (PBKDF2 via WebCrypto) with needsSetup/setup.
     this.blindAuth = {
@@ -72,6 +81,7 @@ export class Service {
       this.audit('goal_created', { name: this.s.goal.name, targetCents: this.s.goal.targetCents, hardLock: this.s.goal.hardLock, source: legacy ? 'migrated' : 'defaults' }, 'system');
     }
     this.expireApprovals();
+    this.sealed.markReady();
   }
 
   // ---------- Linking ----------
@@ -161,6 +171,7 @@ export class Service {
     if (next.hardship.enabled && !(Number.isInteger(next.hardship.coolingOffDays) && next.hardship.coolingOffDays >= minCool && next.hardship.coolingOffDays <= 365)) {
       throw new AppError(400, 'bad_goal', `Hardship cooling-off must be ${minCool}-365 days.`);
     }
+    if (next.targetCents < g.targetCents) this.sealed.guardGoalChange(g, next);
     if (this.isLocked(g)) {
       const loosen = [];
       if (next.targetCents < g.targetCents) loosen.push('lower the target');
@@ -441,6 +452,7 @@ export class Service {
 
   // ---------- Milestones + unlock (settled balance only) ----------
   checkMilestones() {
+    this.checkCards();
     const g = this.s.goal; if (!g) return;
     const t = this.totals();
     if (g.status === 'saving') {
@@ -475,6 +487,7 @@ export class Service {
     this.audit('goal_reached', { name: g.name, targetCents: g.targetCents, settledCents: t.vaultCents, cycle: g.cycle });
     this.audit('vault_unlocked', { rule: g.unlockRule, codeExpiresOn: this.s.vault.code.expiresOn });
     this.notify('goal_reached', `Goal reached: ${money(t.vaultCents)} settled`, `"${g.name}" is complete and your vault is unlocked. Open the app to see your one-time unlock code.`);
+    this.sealed.markReady();
   }
 
   issueUnlockCode() {
@@ -633,6 +646,47 @@ export class Service {
     return { hardship: h, withdrawal: w };
   }
 
+  // ---------- "Did you know?" cards (server/tips.js): one per settled $100, cumulative, pending never counts ----------
+  get cards() { if (!this.s.cards || !Array.isArray(this.s.cards.unlocked)) this.s.cards = emptyCards(); return this.s.cards; }
+  checkCards() {
+    const earned = Math.min(CARDS.length, Math.floor(this.totals().settledDepositsCents / CARD_STEP_CENTS));
+    const have = new Set(this.cards.unlocked.map((u) => u.n));
+    for (let n = 1; n <= earned; n++) {
+      if (have.has(n)) continue;
+      const c = CARDS[n - 1];
+      this.cards.unlocked.push({ n, id: c.id, unlockedAt: new Date().toISOString(), clockDate: this.today(), seenAt: null });
+      this.audit('tip_card_unlocked', { card: c.id, title: c.title }); // no number/amount: safe to show while blind
+    }
+  }
+  markCardsSeen() { const now = new Date().toISOString(); for (const u of this.cards.unlocked) if (!u.seenAt) u.seenAt = now; return { ok: true }; }
+  speedUp(blind) {
+    const s = this.s.schedule, today = this.today();
+    const from = s?.status === 'active' ? addDays(s.cursor || today, 1) : today;
+    return speedUpCards({ goal: this.s.goal, totals: this.totals(), schedule: s, blind, datesFrom: (n) => pullDates(s, from, addDays(from, Math.min(n * 32 + 62, 366 * 40))).slice(0, n) }); // long range (not capped at 400 days)
+  }
+  cardsView(blind) {
+    const list = [...this.cards.unlocked].sort((a, b) => b.n - a.n)
+      .map((u) => ({ ...renderCard(CARDS[u.n - 1], { blind }), unlockedAt: u.unlockedAt, seen: !!u.seenAt }));
+    const next = this.cards.unlocked.length < CARDS.length ? this.cards.unlocked.length + 1 : null;
+    const settled = this.totals().settledDepositsCents;
+    return { unlocked: list, unseen: list.filter((c) => !c.seen).length, total: CARDS.length, blind,
+      next: blind || !next ? null : { n: next, atCents: next * CARD_STEP_CENTS, toGoCents: Math.max(0, next * CARD_STEP_CENTS - settled) },
+      speedUp: this.speedUp(blind), note: 'General information, not financial advice.' };
+  }
+  /** Raise-only deposit change (tap-to-raise on a speed-up card). Needs a new ACH authorization, like any schedule change. */
+  raiseDeposit({ multiplier, amountCents } = {}) {
+    const s = this.s.schedule;
+    if (!s || !['active', 'paused', 'needs_authorization'].includes(s.status)) throw new AppError(409, 'no_schedule', 'Set up automatic deposits first.');
+    const next = multiplier !== undefined ? (([2, 3].includes(Number(multiplier))) ? Math.round(s.amountCents * Number(multiplier)) : NaN) : Math.round(Number(amountCents));
+    if (!Number.isInteger(next) || next <= s.amountCents) {
+      this.audit('lock_loosening_refused', { attempted: ['lower or keep the deposit through the raise flow'] });
+      throw new AppError(400, 'raise_only', 'This button only raises your deposit. To change it otherwise, use Plan.');
+    }
+    const r = this.setSchedule({ ...s, amountCents: next });
+    this.audit('deposit_raised', { fromCents: s.amountCents, toCents: next, reauthorizationRequired: r.reauthorizationRequired });
+    return { ...r, amountCents: next, next: '#/authorize' };
+  }
+
   // ---------- Emergency stop (user only): pause + revoke bot keys. Never unlocks or releases money. ----------
   // ---------- Go Blind ----------
   get blind() { if (!this.s.blind || typeof this.s.blind !== 'object') this.s.blind = emptyBlind(); return this.s.blind; }
@@ -724,7 +778,7 @@ export class Service {
     const keys = this.s.botKeys.filter((k) => !k.revokedAt);
     for (const k of keys) { k.revokedAt = now; k.revokedReason = 'emergency_stop'; }
     const cancelled = this.s.approvals.filter((a) => a.status === 'pending');
-    for (const a of cancelled) { a.status = 'cancelled'; a.decidedAt = now; a.decidedReason = 'emergency_stop'; }
+    for (const a of cancelled) { a.status = 'cancelled'; a.decidedAt = now; a.decidedReason = 'emergency_stop'; if (a.type === 'monthly_move') this.moves.closed(a, 'cancelled'); }
     const t = this.totals();
     const out = { schedulePaused: paused, scheduleStatus: s?.status || null, botKeysRevoked: keys.length, approvalsCancelled: cancelled.length,
       vaultCents: t.vaultCents, goalStatus: this.s.goal?.status, lockUnchanged: true };
@@ -774,7 +828,7 @@ export class Service {
     return a;
   }
   expireApprovals() {
-    for (const a of this.s.approvals) if (a.status === 'pending' && this.today() > a.expiresOn) { a.status = 'expired'; a.decidedAt = new Date().toISOString(); this.audit('approval_expired', { id: a.id, type: a.type }, 'system'); }
+    for (const a of this.s.approvals) if (a.status === 'pending' && this.today() > a.expiresOn) { a.status = 'expired'; a.decidedAt = new Date().toISOString(); this.audit('approval_expired', { id: a.id, type: a.type }, 'system'); if (a.type === 'monthly_move') this.moves.closed(a, 'expired'); }
   }
   async approve(id, { confirm, unlockCode } = {}) {
     const a = this.s.approvals.find((x) => x.id === id);
@@ -799,6 +853,7 @@ export class Service {
     if (!a) throw new AppError(404, 'not_found', 'No such approval request');
     if (a.status !== 'pending') throw new AppError(409, 'not_pending', `This request is ${a.status}.`);
     a.status = 'rejected'; a.decidedAt = new Date().toISOString();
+    if (a.type === 'monthly_move') this.moves.closed(a, 'rejected');
     this.audit('approval_rejected', { id, type: a.type });
     return a;
   }
@@ -814,6 +869,7 @@ export class Service {
       case 'revoke_authorization': return this.revokeAuthorization();
       case 'grant_authorization': return { next: '#/authorize' }; // the user signs the ACH authorization text themselves
       case 'settings_change': return this.updateSettings(p, { fromBot: true });
+      case 'monthly_move': return this.moves.approved(a);
       default: throw new AppError(400, 'bad_type', `Unknown request type ${a.type}`);
     }
   }
@@ -899,6 +955,10 @@ export class Service {
       goLiveGates: evaluateGates(this.s),
       scheduleStatus: s?.status || null,
       blind: this.blindView(), benefitsAlert: this.benefitsAlert(),
+      // Seal my login: status only (label, dates, rule). Secrets and ciphertext never appear in any view.
+      sealedLogins: this.sealed.list.map((r) => this.sealed.view(r)), sealedLoginDraft: this.sealed.draftMeta(), lostCard: this.sealed.lostCardView(),
+      cards: this.cardsView(this.blindRedactUser()),
+      monthlyMoves: this.moves.list.slice(0, 24).map((m) => this.moves.view(m)), sync: { lastPushAt: this.s.sync?.lastPushAt || null, lastPullAt: this.s.sync?.lastPullAt || null, applied: this.s.sync?.seen?.length || 0 },
     };
   }
 }

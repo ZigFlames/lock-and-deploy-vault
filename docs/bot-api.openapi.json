@@ -3,7 +3,7 @@
   "info": {
     "title": "Lock & Deploy Bot API",
     "version": "1.0.0-sandbox",
-    "description": "API for an AI assistant that monitors and manages the Lock & Deploy savings vault (SANDBOX ONLY).\n\n* Auth: `Authorization: Bearer ldbk_<id>.<secret>` (created by the user in the app, shown once, stored hashed, revocable, scoped).\n* Every call, including refused ones, is logged to the in-app Bot activity log and the hash-chained audit log.\n* Rate limit: per key, `settings.bot.rateLimitPerMinute` (default 30/min); 10 failed auths per minute per IP.\n* Direct actions: read, and pause future deposits. Sensitive actions become pending approvals (HTTP 202) that execute only after the user approves in the app, with the unlock code for anything that withdraws.\n* Never available to a bot: bank credentials or provider tokens, unlocking or bypassing the Hard Lock, hardship release, loosening a locked goal, emergency controls, switching to production, deleting or editing audit entries or transactions. There are no DELETE/PUT/PATCH operations (405)."
+    "description": "API for an AI assistant that monitors and manages the Lock & Deploy savings vault (SANDBOX ONLY).\n\n* Auth: `Authorization: Bearer ldbk_<id>.<secret>` (created by the user in the app, shown once, stored hashed, revocable, scoped).\n* Every call, including refused ones, is logged to the in-app Bot activity log and the hash-chained audit log.\n* Rate limit: per key, `settings.bot.rateLimitPerMinute` (default 30/min); 10 failed auths per minute per IP.\n* Direct actions: read, and pause future deposits. Sensitive actions become pending approvals (HTTP 202) that execute only after the user approves in the app, with the unlock code for anything that withdraws.\n* Never available to a bot: bank credentials or provider tokens, unlocking or bypassing the Hard Lock, hardship release, loosening a locked goal, emergency controls, switching to production, deleting or editing audit entries or transactions. There are no DELETE/PUT/PATCH operations (405).\n* Seal my login: a bot sees only that a sealed login exists (label, sealedAt, status). It can never reveal, create, delete, reseal it or change its unlock date (403, logged).\n* Did you know? cards: readable via /bot/v1/cards (no amounts while Go Blind is on). /bot/v1/speed-up/propose asks the user to raise the deposit (approval + new authorization)."
   },
   "servers": [
     {
@@ -160,7 +160,7 @@
             "type": "string"
           }
         },
-        "description": "Forbidden types return 403 forbidden_for_bot: unlock, early_unlock, bypass_lock, hardship_release, disable_hard_lock, lower_goal, switch_production, enable_real_money, disable_emergency, disable_emergency_stop, delete_audit, edit_audit, hide_transaction, delete_transaction, read_tokens, read_credentials, create_bot_key, raise_rate_limit_self."
+        "description": "Forbidden types return 403 forbidden_for_bot: unlock, early_unlock, bypass_lock, hardship_release, disable_hard_lock, lower_goal, switch_production, enable_real_money, disable_emergency, disable_emergency_stop, delete_audit, edit_audit, hide_transaction, delete_transaction, read_tokens, read_credentials, create_bot_key, raise_rate_limit_self. Also refused: blind_off, disable_blind, turn_off_blind, remove_stay_blind, reveal_amounts, show_amounts, read_hidden_amounts, and every sealed-login type (reveal_sealed_login, reveal_login, reveal_password, show_password, read_sealed_login, unseal, unseal_login, create_sealed_login, seal_login, delete_sealed_login, reseal_login, change_unlock_date, earlier_unlock_date)."
       }
     },
     "responses": {
@@ -200,7 +200,7 @@
     "/bot/v1/status": {
       "get": {
         "summary": "Balances, goal, schedule, pending approvals",
-        "description": "Settled (locked) and pending balances are reported separately. Only settled deposits count toward the goal.\n\nRequired scope: `read`.",
+        "description": "Settled (locked) and pending balances are reported separately. Only settled deposits count toward the goal.\n\nRequired scope: `read`. Includes `sealedLogins` (label, status, sealedAt only).",
         "security": [
           {
             "botKey": [
@@ -685,6 +685,580 @@
                 "type": "object"
               }
             }
+          }
+        }
+      }
+    },
+    "/bot/v1/sealed-logins": {
+      "get": {
+        "summary": "List sealed logins (status only)",
+        "description": "Returns `sealedLogins: [{label, status: sealed|unlocked, sealedAt}]`. Never the username, password, recovery email, phone, notes, security answers, unlock internals or ciphertext.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a sealed login: always refused for bots",
+        "description": "Always 403 `forbidden_for_bot`, logged as `bot_forbidden_request`. Only the user can seal a login, in the app, after typing the confirmation phrase.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/sealed-logins/reveal": {
+      "post": {
+        "summary": "Reveal a sealed login: always refused for bots",
+        "description": "Always 403 `forbidden_for_bot`, even after the login unlocks, and logged as `sealed_login_reveal_refused` (by: bot). Request types `reveal_sealed_login`, `reveal_login`, `reveal_password`, `show_password`, `read_sealed_login`, `unseal`, `unseal_login` on /bot/v1/requests are refused the same way.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/sealed-logins/delete": {
+      "post": {
+        "summary": "Delete a sealed login: always refused for bots",
+        "description": "Always 403 `forbidden_for_bot`, logged as `bot_forbidden_request`. Only the user can do this in the app (and the unlock date can only move later).\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/sealed-logins/reseal": {
+      "post": {
+        "summary": "Reseal a sealed login: always refused for bots",
+        "description": "Always 403 `forbidden_for_bot`, logged as `bot_forbidden_request`. Only the user can do this in the app (and the unlock date can only move later).\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/sealed-logins/unlock": {
+      "post": {
+        "summary": "Change the unlock date/rule of a sealed login: always refused for bots",
+        "description": "Always 403 `forbidden_for_bot`, logged as `bot_forbidden_request`. Only the user can do this in the app (and the unlock date can only move later).\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/cards": {
+      "get": {
+        "summary": "\"Did you know?\" milestone cards + speed-up projections",
+        "description": "Unlocked cards (one per settled $100 saved; pending never counts) and live speed-up projections computed from the plan. While Go Blind is on: no card numbers, no amounts, general figures in words, speed-up cards say \"double/triple your deposit\" with dates and time differences only, and `blindMode: true`.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/speed-up/propose": {
+      "post": {
+        "summary": "Propose a faster deposit (raise only)",
+        "description": "Creates a `schedule_change` approval that multiplies the current deposit by 2 or 3. Only the user can approve it in the app, and then must sign a new ACH authorization. Never lowers a deposit.\n\nRequired scope: `request`.",
+        "security": [
+          {
+            "botKey": [
+              "request"
+            ]
+          }
+        ],
+        "x-scope": "request",
+        "responses": {
+          "202": {
+            "description": "Approval created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "multiplier"
+                ],
+                "properties": {
+                  "multiplier": {
+                    "type": "integer",
+                    "enum": [
+                      2,
+                      3
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/monthly-moves": {
+      "get": {
+        "summary": "List monthly moves and the user's decisions",
+        "description": "Monthly moves across three banks: Varo (SSI lands, spending) \u2192 Step (bridge only, balance kept at zero) \u2192 Current (sealed savings, handled by the assistant on current.com). Status: `awaiting_approval`, `approved` (the user tapped Approve: you may start), `in_progress`, `done`, `rejected`, `expired`, `cancelled`. Each move has three `legs` done in order (`nextLeg`): `varo_to_step` (instant: Step pulls from the Varo debit card; if instant isn't offered, stop and tell the user), `step_to_current` (may take 1-3 business days to arrive, but leaves Step right away), `arrival_confirmed` (you checked Current). `stepZeroReminder`: Step should be at zero after step 2. This app never moves the money. While Go Blind is on, amounts are null and summaries say [hidden].\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/bot/v1/monthly-moves/propose": {
+      "post": {
+        "summary": "Ask for this month's move (pending approval)",
+        "description": "Creates a `monthly_move` approval such as \"Monthly move: $100.00 Varo \u2192 Step (instant) \u2192 Current on 2026-10-02\". Defaults: amount = the current deposit amount, date = 3 days from today, from `Varo`, via `Step`, to `Current`. One open request per calendar month. Nothing happens until the user approves it in the app.\n\nRequired scope: `request`.",
+        "security": [
+          {
+            "botKey": [
+              "request"
+            ]
+          }
+        ],
+        "x-scope": "request",
+        "responses": {
+          "202": {
+            "description": "Approval created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500000
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "from": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "to": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 140
+                  },
+                  "via": {
+                    "type": "string",
+                    "maxLength": 40
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/monthly-moves/complete": {
+      "post": {
+        "summary": "Mark an approved move done (after you did it)",
+        "description": "Records ONE step of an approved move after you did it, in order: `varo_to_step`, `step_to_current`, `arrival_confirmed` (`leg` defaults to the next one; out of order = 409). Give the bank's confirmation. After `step_to_current` you may report `stepBalanceCents` (should be 0; anything else returns a warning). Refused (409) unless the user approved the move. Records only; no money moves.\n\nRequired scope: `request`.",
+        "security": [
+          {
+            "botKey": [
+              "request"
+            ]
+          }
+        ],
+        "x-scope": "request",
+        "responses": {
+          "200": {
+            "description": "Marked done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "confirmation"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "confirmation": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 80
+                  },
+                  "leg": {
+                    "type": "string",
+                    "enum": [
+                      "varo_to_step",
+                      "step_to_current",
+                      "arrival_confirmed"
+                    ]
+                  },
+                  "stepBalanceCents": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bot/v1/snapshot": {
+      "get": {
+        "summary": "Everything the assistant needs in one read-only call",
+        "description": "Status, schedule, balances (settled vs pending), recent approvals, the user's decisions (approved/rejected, pauses, raises, monthly moves), monthly moves and sealed-login status (label/status only). Same content as the encrypted sync snapshot of the static demo (docs/ASSISTANT_SYNC.md). Never contains secrets. Redacted while Go Blind is on.\n\nRequired scope: `read`.",
+        "security": [
+          {
+            "botKey": [
+              "read"
+            ]
+          }
+        ],
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         }
       }

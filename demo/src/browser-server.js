@@ -8,6 +8,7 @@ import { emptyState, migrate } from '../../server/store.js';
 import { Service, AppError } from '../../server/service.js';
 import { createRoutes } from '../../server/routes.js';
 import { hashBlindPasscode, verifyBlindPasscode } from './blind-passcode.js';
+import { createWebCryptoSealCipher, indexedDbKeyLoader } from './sealed-cipher.js';
 import { createBotApi } from '../../server/bot.js';
 import { createNotifier } from '../../server/notifiers/index.js';
 import { MockProvider } from '../../server/providers/mock.js';
@@ -55,6 +56,9 @@ service.blindAuth = {
   setup: async (p) => { store.state.blind.passcodeHash = await hashBlindPasscode(p); },
   verify: async (p) => verifyBlindPasscode(p, store.state.blind?.passcodeHash),
 };
+// Seal my login: WebCrypto AES-256-GCM with a non-extractable device key in IndexedDB. Unlock dates use this device's
+// clock (honest limit: changing the phone's clock could fool the demo; the server version uses server time).
+service.sealCipher = createWebCryptoSealCipher(indexedDbKeyLoader());
 const locked = (actor, fn) => store.withLock(async () => { service.actor = actor; service.bootstrap(); try { return await fn(); } finally { service.actor = 'system'; } });
 const fakeReq = () => ({ socket: { remoteAddress: 'this browser (demo)' }, headers: { 'user-agent': navigator.userAgent } });
 
@@ -79,6 +83,17 @@ const SIM_BOT = {
   try_disable_hard_lock: () => botCall('POST', '/bot/v1/requests', { type: 'disable_hard_lock' }),
   try_production: () => botCall('POST', '/bot/v1/requests', { type: 'switch_production' }),
   try_delete_audit: () => botCall('DELETE', '/bot/v1/audit'),
+  sealed_status: () => botCall('GET', '/bot/v1/sealed-logins'),
+  try_reveal_login: () => botCall('POST', '/bot/v1/sealed-logins/reveal', {}),
+  try_delete_login: () => botCall('POST', '/bot/v1/sealed-logins/delete', {}),
+  cards: () => botCall('GET', '/bot/v1/cards'),
+  propose_speed_up: () => botCall('POST', '/bot/v1/speed-up/propose', { multiplier: 2, reason: 'You would finish sooner.' }),
+  propose_monthly_move: () => botCall('POST', '/bot/v1/monthly-moves/propose', { reason: 'This month\'s savings move.' }),
+  read_monthly_moves: () => botCall('GET', '/bot/v1/monthly-moves'),
+  // The real assistant does each step at the banks first. The simulated bot records the NEXT step with a fake confirmation.
+  complete_monthly_move: () => { const m = (store.state.monthlyMoves || []).find((x) => ['approved', 'in_progress'].includes(x.status));
+    const leg = m?.legs?.find((l) => l.status !== 'done')?.id;
+    return botCall('POST', '/bot/v1/monthly-moves/complete', { id: m?.id || 'none', leg, confirmation: `SIM-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, ...(leg === 'step_to_current' ? { stepBalanceCents: 0 } : {}) }); },
 };
 
 const extraRoutes = {
@@ -98,6 +113,7 @@ const extraRoutes = {
   },
   'POST /api/demo/wipe': async () => {
     if (store.state.blind?.on) throw new AppError(423, 'blind_on', 'Turn off Go Blind first (with your Go Blind passcode). Clearing this site\'s data in the browser also resets the demo.');
+    service.sealed.guardWipe('demo_wipe');
     localStorage.removeItem(K.state); localStorage.removeItem(K.bot); store.load(); service.bootstrap(); return { ok: true }; },
 };
 const routes = { ...createRoutes({ store, service, config }), ...extraRoutes };

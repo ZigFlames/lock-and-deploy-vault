@@ -16,7 +16,8 @@
     "test:e2e": "python3 test/e2e_mobile.py",
     "check:plaid": "node scripts/check-plaid.js",
     "bot": "node bot-cli.js",
-    "test:e2e:blind": "python3 test/e2e_blind.py server"
+    "test:e2e:blind": "python3 test/e2e_blind.py server",
+    "test:e2e:sealed": "python3 test/e2e_sealed.py server"
   },
   "dependencies": {
     "plaid": "^47.0.0"

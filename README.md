@@ -10,7 +10,7 @@ A personal prototype for Lance (ZigFlames). It links **two of your own bank acco
 
 Separate from the phase-1 simulation PWA (`lock-and-deploy`). Same look: near-black, gold `#D4AF37`, lock icon.
 
-More docs: [Emergency access & the bank](docs/EMERGENCY_ACCESS.md) · [Secrets](docs/SECRETS.md) · [Extending (notifiers, providers, rules)](docs/EXTENDING.md) · [Bot API (OpenAPI)](docs/bot-api.openapi.json)
+More docs: [Seal my login](docs/SEALED_LOGIN.md) · [Assistant sync & monthly move](docs/ASSISTANT_SYNC.md) · [Emergency access & the bank](docs/EMERGENCY_ACCESS.md) · [Secrets](docs/SECRETS.md) · [Extending (notifiers, providers, rules)](docs/EXTENDING.md) · [Bot API (OpenAPI)](docs/bot-api.openapi.json)
 
 ---
 
@@ -93,9 +93,57 @@ A switch for when seeing the balance is the temptation. Home → **Go Blind** (a
 - **Benefits guard (works while blind):** Settings → *Benefits guard* → **I receive SSI**, a resource limit (default **$2,000**) and "warn at" (default **80 %**). When **settled** savings reach the warning level, Home shows a banner with **no numbers**: "Your savings are getting close to the SSI resource limit. Consider an ABLE account or talk to SSA." Over the limit, it says so, also without numbers. The bot can't change these settings. The overdraft buffer keeps working as before, silently.
 - **Key events** (More → Log) record `blind_on`, `blind_stay_until_goal_added`, `blind_off_failed`, `blind_off_lockout`, `blind_off_refused`, `blind_off` and `blind_passcode_set`, with no amounts shown while blind.
 
+## Guided setup: Seal my login → unlock date → lost card → dashboard
+
+The plan uses **three banks**: **Varo** (SSI lands; spending) → **Step** (bridge only, kept at zero) → **Current** (sealed, locked savings; the assistant handles it on current.com, you never open it). More → **Guided setup** (`#/setup`) walks through it with fake data:
+
+1. **Seal my login.** Label "Current Savings". **Generate** a password or **enter** your own:
+   - generated passwords are crypto-random, 20 characters by default, with configurable length, symbols and look-alike skipping;
+   - add a username/email, an optional recovery email, burner phone, notes and security questions (random 4-word answers optional).
+   The values are **shown once** with Copy buttons. A checklist follows ("entered at the bank", "test login worked", "not saved in a password manager"), then the unlock rule, then you type `SEAL MY LOGIN`.
+2. **Unlock date / timer.**
+   - Rules: **date** (default), **goal**, or **date and goal** (whichever is later), with a live countdown.
+   - **Tighten only:** the date only moves later, and a goal can be added, never removed.
+   - Opening, deleting, sandbox reset and demo Start over are refused while sealed. Every attempt is logged.
+   - **Reseal** (the bank forced a password change) makes a new password, never shows the old one, and needs `RESEAL MY LOGIN`.
+3. **Lost-card checklist** for the Current card: report it lost (Current app or Current support; the contact info is in the app or on current.com), remove it from Apple Wallet, cut it up, delete the Current app, and ask for a new card only after the unlock date. Your ticks are saved and logged.
+4. **Dashboard:** sample plan ($100/month on the day after SSI, $3,000 Mattress goal, SSI guard on). Authorize it and turn on Go Blind from the same screen.
+
+The AI assistant sees only the label, sealedAt and status. Reveal, create, delete, reseal and unlock changes are always 403. It uses AES-256-GCM: Node crypto on the server (key from `SEALED_LOGIN_KEY`/`_FILE`), a non-extractable WebCrypto key in the demo.
+
+**Honest limits:** the bank can always reset the login after identity checks, so the real lock is the bank's rules plus a trusted person. In the demo, the key is on the same device, changing the phone clock could fool the date, and clearing site data erases the login (without revealing it). Details and the recommended real-world setup (separate bank, new email, prepaid-SIM burner kept by a trusted person, no card or app): [`docs/SEALED_LOGIN.md`](docs/SEALED_LOGIN.md).
+
+## "Did you know?" cards and speed-up
+
+- **One card per settled $100** saved. Pending money never counts, and earned cards stay unlocked. There are 40 cards in three tiers (basics → building → next).
+  - Classic, widely known habits: pay yourself first, automate savings, avoid fee-charging cash advances, build an emergency fund, and similar. General information only, no made-up statistics.
+  - A celebration shows on Home for each new card. The collection is at `#/cards`.
+- **Speed-up cards computed live from your plan** (goal, settled + in-flight deposits, deposit amount, frequency):
+  - "Raise your deposit from $100 to $200/month and you'd reach your $3,000 goal about 14 months sooner (around Nov 2027 instead of Jan 2029)"; the same for $300;
+  - a long-range "at this pace you'd reach $10,000 (a home down payment goal) around …".
+  - **Tap to raise** goes through the raise-only flow (`POST /api/schedule/raise`; it can never lower the deposit) and requires a **new ACH authorization**.
+  - When the bot suggests it (`POST /bot/v1/speed-up/propose`), it's an **approval** you decide on.
+- **SSI reminder** on any projection past $2,000: "$2,000 resource limit for an individual; ABLE money excluded up to $100,000".
+- **Go Blind:** cards say "New milestone unlocked" (no number, no amount). Speed-up cards say "double / triple your deposit" and show only dates and time differences. The SSI reminder is always shown.
+
+## Monthly move and assistant sync
+
+- **Monthly move** (More → Monthly move, `#/moves`):
+  - Each month the assistant asks: "Monthly move: $X **Varo → Step (instant) → Current** on <date>". This is a pending approval. While Go Blind is on it shows `[hidden]`.
+  - You tap **Approve**. The assistant reads the decision and does three steps itself, recording the bank's confirmation for each:
+    1. Varo → Step (instant; Step pulls from the Varo debit card);
+    2. Step → Current (may take 1-3 business days, but it leaves Step right away);
+    3. the assistant confirms arrival in Current.
+  - A standing reminder: **Step balance should be $0**.
+  - The app never moves this money. The prototype's "Simulate completion" fills in fake confirmations.
+- **How the assistant reads your state and decisions:**
+  - **Server version:** `GET /bot/v1/snapshot` with a bot key.
+  - **Static phone demo:** an **encrypted sync**. You give the assistant a sync code once. "Sync now" uploads an AES-256-GCM snapshot to a small relay (ciphertext only) and pulls back the assistant's requests, which become normal approvals. No relay? Download the encrypted snapshot as a file. The relay ships with the server prototype (`SYNC_RELAY=on`) and is **not hosted for you**.
+  - Plain-language design, limits and commands: [`docs/ASSISTANT_SYNC.md`](docs/ASSISTANT_SYNC.md).
+
 ## Emergency stop & your bank account
 
-- **Emergency stop** (More → Emergency stop & your bank; user only, the bot can't trigger or disable it): **pauses all future deposits and revokes every bot key** (and cancels pending bot approvals). It **never unlocks the vault or releases money**. The button says "Emergency stop (does not unlock)". Resume deposits from Transfers when ready.
+- **Emergency stop** (More → Emergency stop & your bank; user only, the bot can't trigger or disable it): **pauses all future deposits and revokes every bot key** (and cancels pending bot approvals, including monthly moves waiting for approval). It **never unlocks the vault or releases money**. The button says "Emergency stop (does not unlock)". Resume deposits from Transfers when ready.
 - **Your bank account: the facts.** The app is a discipline tool. It can't legally or technically stop your bank from giving you, the account owner, your own money, and the app and bot never touch your bank's login, password reset or account recovery. Bank password problems go through the bank's normal recovery.
 - **Make the lock stronger at the bank:** separate bank from everyday checking · no debit card on the savings account · don't install that bank's app on your phone · a CD (early-withdrawal penalty) or a Fort Knox-style withdrawal-hold account (bank-enforced delay) · optionally a sealed envelope with the savings login held by a trusted person · an ABLE account if you get SSI.
 
@@ -120,6 +168,10 @@ The user creates a key in **More → Bot** (shown once, stored as SHA-256). Scop
 | `POST /bot/v1/schedule/pause` | pause | Pauses future deposits immediately (safe direction) |
 | `POST /bot/v1/blind/on` | pause | Turns Go Blind on (safe direction). All bot responses are then redacted with `blindMode: true` |
 | `POST /bot/v1/blind/off` | any | Always 403: only the user can turn Go Blind off, with the passcode |
+| `GET /bot/v1/snapshot` | read | Everything in one read: status, approvals, **your decisions**, monthly moves, sealed-login status |
+| `GET /bot/v1/sealed-logins` | read | Label, sealedAt and status only. `POST …/reveal`, create, `/delete`, `/reseal`, `/unlock` → always 403 (logged) |
+| `GET /bot/v1/cards` · `POST /bot/v1/speed-up/propose` | read · request | Did-you-know cards + live speed-up projections · ask to double/triple the deposit → approval (202) |
+| `GET /bot/v1/monthly-moves` · `POST …/propose` · `POST …/complete` | read · request · request | Monthly move Varo → Step (instant) → Current: ask → you approve → record each step's confirmation (in order) |
 | `POST /bot/v1/requests` | request | Resume, schedule change, funding-account change, settings change, withdrawal (only after unlock, needs your code) → approval (202). Unlock/bypass/production/lower-goal types → 403 |
 
 ```bash
@@ -136,6 +188,13 @@ npm run bot -- prepare-rollover --withdraw 1000 --new-target 4000
 npm run bot -- pause
 npm run bot -- blind-on      # hide amounts; bots can never turn it off
 npm run bot -- request resume_schedule --reason "funds look fine"
+npm run bot -- snapshot                     # state + your decisions in one read
+npm run bot -- sealed-logins                # label/status only; reveal-sealed is always refused
+npm run bot -- cards
+npm run bot -- speed-up --multiplier 2      # becomes an approval
+npm run bot -- propose-move                 # monthly move Varo -> Step (instant) -> Current
+npm run bot -- complete-move --id mv_... --confirmation "VARO-123"
+npm run bot -- sync-read                    # static demo: decrypt the phone's snapshot (LDB_SYNC_CODE, LDB_SYNC_RELAY)
 ```
 
 Full schema: [`docs/bot-api.openapi.json`](docs/bot-api.openapi.json).
@@ -224,7 +283,7 @@ The tests in `test/guard.test.js` cover every refusal above.
 
 ## Security model
 
-- **No bank credentials, ever.** Linking is token-based (mock Link or Plaid Link). The server stores provider IDs, the **encrypted** access token (AES-256-GCM), account names, subtypes and the last-4 mask. No usernames, passwords, full account or routing numbers. The app and bot never touch bank login, password reset or recovery.
+- **No bank credentials for linking.** Linking is token-based (mock Link or Plaid Link). The server stores provider IDs, the **encrypted** access token (AES-256-GCM), account names, subtypes and the last-4 mask. No usernames, passwords, full account or routing numbers. The app and bot never touch bank login, password reset or recovery. **The one exception is Seal my login:** a login *you* choose to seal is stored AES-256-GCM encrypted and is never shown, logged or given to the bot, and is only shown to you after its unlock condition.
 - **Hashed secrets:** the app passcode (scrypt), bot keys (SHA-256), and unlock codes (scrypt; the plaintext is held encrypted only until shown once). See [`docs/SECRETS.md`](docs/SECRETS.md).
 - **Two separate front doors:** `/api` needs your passcode session and refuses bot keys; `/bot/v1` needs a scoped bot key and can't reach user-only actions (approve, unlock, emergency stop, settings that loosen the lock, production).
 - **Audit log** is append-only with a SHA-256 hash chain (`GET /api/audit/verify`, status shown on the Log screen).
@@ -239,7 +298,12 @@ server/
   app.js              HTTP routes, passcode auth, static files, CSP, webhook endpoint
   routes.js           user API route table (shared with the browser demo)
   service.js          goals + Hard Lock rules, engine, vault, rollover, hardship, approvals, emergency stop
-  bot.js              /bot/v1 routes, key auth, scopes, rate limits, activity log
+  bot.js              /bot/v1 routes, key auth, scopes, rate limits, activity log, assistant snapshot
+  sealed.js           Seal my login: generator, AES-GCM sl1 cipher, tighten-only unlock, lost-card checklist
+  tips.js             Did-you-know cards + live speed-up projections
+  moves.js            monthly move Varo -> Step -> Current (approval + recorded steps; never moves money)
+  sync.js             assistant sync: sync code, AES-GCM envelopes, ciphertext-only relay (SYNC_RELAY=on)
+  sync-inbox.js       assistant -> app messages (safe types only; become approvals)
   settings.js         settings schema + validation (defaults in config/default-settings.json)
   rules/index.js      pre-pull rules pipeline (registerRule)
   notifiers/index.js  notification channels (registerNotifier)
@@ -251,24 +315,27 @@ server/
 public/               mobile-first UI (index.html, css/styles.css, js/app.js, icons/)
 scripts/              tick.js, reset-passcode.js, check-plaid.js
 bot-cli.js            shell client for the bot API
-test/                 node:test suites + Playwright phone-size passes (e2e_mobile.py, e2e_static.py, e2e_blind.py)
-docs/                 RESEARCH, EMERGENCY_ACCESS, SECRETS, EXTENDING, STATIC_DEMO, bot-api.openapi.json
+test/                 node:test suites + Playwright phone-size passes (e2e_mobile.py, e2e_static.py, e2e_blind.py, e2e_sealed.py)
+docs/                 RESEARCH, EMERGENCY_ACCESS, SECRETS, EXTENDING, STATIC_DEMO, SEALED_LOGIN, ASSISTANT_SYNC, bot-api.openapi.json
 demo/                 browser-only PWA build (src/browser-server.js + shims, static/, build.mjs)
 screenshots/          390x844 screenshots from the headless run
 ```
 
 ## Tests
 ```bash
-npm test               # 71 node:test tests: API, production guard, Plaid adapter (stubbed client), schedule math,
+npm test               # 88 node:test tests: API, production guard, Plaid adapter (stubbed client), schedule math,
                        # engine (idempotency, balance buffer, returns), vault/Hard Lock/loosening/hardship/rollover, bot API,
                        # Go Blind (passcode off + lockout, stay-until-goal, bot redaction/refusal, SSI alert while blind,
-                       # demo PBKDF2 passcode)
+                       # demo PBKDF2 passcode), Seal my login (generator, Node/WebCrypto AES-GCM, seal/reseal flow, secrets never
+                       # in state/logs/bot/disk, tighten-only, refusals), cards + speed-up + raise-only, monthly move, sync + relay
 npm run test:e2e       # Playwright + system Chrome at 390x844; starts its own server; writes screenshots/ and test/last-e2e.json
 npm run test:e2e:blind # Go Blind at 390x844 on the server build: DOM-text scan for '$'/money digits on every screen,
                        # SSI alert, passcode off, stay-blind-until-goal, unlock still shows (test/e2e_blind.py)
 python3 test/e2e_blind.py static https://zigflames.com/lock-and-deploy-vault/   # same checks against the static demo
+python3 test/e2e_sealed.py server      # guided setup, seal/refusals/reseal, lost card, cards + speed-up, Go Blind, monthly move
+python3 test/e2e_sealed.py static https://zigflames.com/lock-and-deploy-vault/   # + assistant sync via a local relay, unlock by date
 ```
-- Screenshots (390x844, from the e2e run): `screenshots/01-link-accounts.png`, `02-schedule-setup`, `03-pending-transfers`, `04-paused`, `05-dashboard-pending-vs-settled`, `06-milestone-unlocked-code`, `07-rollover-wizard`, `08-approvals-inbox`, `09-bot-activity-log`, `10-emergency-access`, `11-vault-hard-lock`, `12-stronger-lock-at-bank`, `13-static-demo-live`; Go Blind: `14-blind-dashboard`, `15-blind-off-passcode`, `16-ssi-alert-blind` (server), `17-static-blind-dashboard`, `18-static-blind-bot`, `19-static-blind-off-passcode` (live static demo).
+- Screenshots (390x844, from the e2e run): `screenshots/01-link-accounts.png`, `02-schedule-setup`, `03-pending-transfers`, `04-paused`, `05-dashboard-pending-vs-settled`, `06-milestone-unlocked-code`, `07-rollover-wizard`, `08-approvals-inbox`, `09-bot-activity-log`, `10-emergency-access`, `11-vault-hard-lock`, `12-stronger-lock-at-bank`, `13-static-demo-live`; Go Blind: `14-blind-dashboard`, `15-blind-off-passcode`, `16-ssi-alert-blind` (server), `17-static-blind-dashboard`, `18-static-blind-bot`, `19-static-blind-off-passcode` (live static demo); Seal my login & more (live static demo, `static-` prefix; server run without): `20-setup-seal-login`, `21-seal-show-once-checklist`, `22-unlock-date-countdown`, `23-seal-typed-confirm`, `24-lost-card-checklist`, `25-setup-dashboard-sample`, `26-sealed-locked-refused`, `27-sealed-bot-refused`, `28-reseal-new-password`, `29-did-you-know-celebration`, `30-cards-collection-speedup`, `31-cards-blind`, `32-sealed-unlocked-reveal`, `33-monthly-move-approval-blind`, `34-monthly-move-steps`, `35-monthly-move-done`, `36-assistant-sync`.
 - **Not verified:** live calls to Plaid Sandbox (no keys were available), the real Plaid Link iframe, and the webhook notifier against a real endpoint. Run `npm run check:plaid` once you have Sandbox keys.
 
 ## Limitations

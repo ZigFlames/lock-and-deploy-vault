@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.js';
-import { loadKey } from './crypto.js';
+import { loadKey, loadSealKey } from './crypto.js';
+import { nodeSealCipher } from './sealed.js';
 import { Service, AppError } from './service.js';
 import { createProvider } from './providers/index.js';
 import { ProviderError } from './providers/BankProvider.js';
@@ -13,6 +14,7 @@ import { createNotifier } from './notifiers/index.js';
 import { createBotApi } from './bot.js';
 import { scryptHash, scryptVerify, sha256hex, randomToken } from './secrets.js';
 import { createRoutes } from './routes.js';
+import { createSyncRelay } from './sync.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
@@ -30,6 +32,7 @@ export async function createApp(config, { plaidClient, log = console, env = proc
   const store = new Store(config.dataDir);
   const { key } = loadKey(config.tokenKey, config.dataDir, log);
   const service = new Service({ store, key, config });
+  service.sealCipher = nodeSealCipher(loadSealKey({ configured: config.sealedLoginKey, file: config.sealedLoginKeyFile, dataDir: config.dataDir }, log).key);
   service.notifier = createNotifier({ store, env: { NOTIFY_WEBHOOK_URL: config.notify?.webhookUrl, NOTIFY_WEBHOOK_SECRET: config.notify?.webhookSecret }, log, enabled: () => service.settings.notifications });
   service.provider = await createProvider({ config, store, today: () => service.today(), plaidClient, fundingBalanceCents: () => service.settings.mock.fundingBalanceCents });
   const bot = createBotApi({ service, store });
@@ -84,12 +87,14 @@ export async function createApp(config, { plaidClient, log = console, env = proc
     ...createRoutes({ store, service, config }),
   };
 
+  const syncRelay = config.syncRelay ? createSyncRelay({ dataDir: config.dataDir, allowedOrigins: config.syncAllowedOrigins }) : null;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'no-store');
     try {
+      if (url.pathname.startsWith('/sync/v1/')) { if (!syncRelay) return json(res, 404, { error: 'sync_relay_off', message: 'Start the server with SYNC_RELAY=on to use the sync relay.' }); return await syncRelay(req, res, url); }
       if (url.pathname.startsWith('/bot/')) {
         const out = await store.withLock(async () => { service.bootstrap(); return bot.handle({ method: req.method, pathname: url.pathname, headers: req.headers, ip: req.socket.remoteAddress, readJson: async () => JSON.parse((await readBody(req)) || '{}') }); });
         return json(res, out.status, out.body);

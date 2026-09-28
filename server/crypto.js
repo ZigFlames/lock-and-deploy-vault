@@ -38,3 +38,27 @@ export function decrypt(key, blob) {
 
 export const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 export const newId = (prefix) => `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
+
+/**
+ * Key for "Seal my login" (AES-256-GCM), separate from the token key. In order:
+ *   SEALED_LOGIN_KEY       32 random bytes, base64 (from a secrets manager / env)
+ *   SEALED_LOGIN_KEY_FILE  path to a file holding that base64 key (e.g. a mounted secret, chmod 600)
+ *   otherwise a local dev key at DATA_DIR/.sealed-login-key (mode 0600, git-ignored with data/).
+ * Whoever can read this key and data/db.json can decrypt sealed logins. Never commit it.
+ */
+export function loadSealKey({ configured, file, dataDir }, log = console) {
+  const parse = (b64, from) => {
+    const buf = Buffer.from(String(b64).trim(), 'base64');
+    if (buf.length !== 32) throw new Error(`${from} must be 32 bytes, base64-encoded.`);
+    return buf;
+  };
+  if (configured) return { key: parse(configured, 'SEALED_LOGIN_KEY'), source: 'env' };
+  if (file) return { key: parse(fs.readFileSync(file, 'utf8'), 'SEALED_LOGIN_KEY_FILE'), source: 'file' };
+  fs.mkdirSync(dataDir, { recursive: true });
+  const f = path.join(dataDir, '.sealed-login-key');
+  if (!fs.existsSync(f)) {
+    fs.writeFileSync(f, crypto.randomBytes(32).toString('base64'), { mode: 0o600 });
+    log.warn?.(`[crypto] SEALED_LOGIN_KEY not set; generated a local key at ${f}. Keep it out of git and backups you share.`);
+  }
+  return { key: parse(fs.readFileSync(f, 'utf8'), f), source: 'dev-file' };
+}

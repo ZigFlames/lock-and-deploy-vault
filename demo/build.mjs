@@ -48,7 +48,10 @@ for (const f of files.sort()) h.update(fs.readFileSync(f));
 h.update(fs.readFileSync(path.join(HERE, 'static', 'index.html')));
 const BUILD = h.digest('hex').slice(0, 10);
 
-fs.writeFileSync(path.join(DIST, 'index.html'), fs.readFileSync(path.join(HERE, 'static', 'index.html'), 'utf8').replaceAll('__BUILD__', BUILD));
+// Assistant sync: the page may talk to a relay on this computer (the server prototype with SYNC_RELAY=on). A hosted relay must be
+// added at build time: LDB_SYNC_RELAY_ORIGINS="https://relay.example.org" npm run build (see docs/ASSISTANT_SYNC.md).
+const RELAY_ORIGINS = ['http://127.0.0.1:*', 'http://localhost:*', ...String(process.env.LDB_SYNC_RELAY_ORIGINS || '').split(/[\s,]+/).filter((o) => /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(o))];
+fs.writeFileSync(path.join(DIST, 'index.html'), fs.readFileSync(path.join(HERE, 'static', 'index.html'), 'utf8').replaceAll('__BUILD__', BUILD).replace("connect-src 'self'", `connect-src 'self' ${RELAY_ORIGINS.join(' ')}`));
 const rel = (p) => './' + path.relative(DIST, p).split(path.sep).join('/');
 const assets = ['./', './index.html', ...files.filter((f) => !f.endsWith('404.html')).map(rel).map((r) => (/\/js\/(engine|app|sw-register)\.js$/.test(r) ? `${r}?v=${BUILD}` : r))];
 fs.writeFileSync(path.join(DIST, 'sw.js'), fs.readFileSync(path.join(HERE, 'static', 'sw.template.js'), 'utf8').replaceAll('__BUILD__', BUILD).replace('__ASSETS__', JSON.stringify(assets, null, 2)));

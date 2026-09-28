@@ -14,6 +14,8 @@
 // switch to production, delete/hide audit entries or transactions.
 // Go Blind: while it is on, EVERY bot response has amounts nulled and money text replaced (blindMode: true).
 // A bot may turn Go Blind ON (safe direction) but can never turn it off or read the hidden amounts.
+// Seal my login: GET /bot/v1/sealed-logins shows label, sealedAt and status only. Reveal, create, delete, reseal and
+// unlock changes are always 403 and logged (reveal attempts as sealed_login_reveal_refused).
 import { AppError } from './service.js';
 import { sha256hex, safeEqualHex } from './secrets.js';
 import { validatePatch, BOT_FORBIDDEN_SETTINGS } from './settings.js';
@@ -21,30 +23,60 @@ import { validatePatch, BOT_FORBIDDEN_SETTINGS } from './settings.js';
 export const FORBIDDEN_REQUEST_TYPES = ['unlock', 'early_unlock', 'bypass_lock', 'hardship_release', 'disable_hard_lock', 'lower_goal',
   'switch_production', 'enable_real_money', 'disable_emergency', 'disable_emergency_stop', 'delete_audit', 'edit_audit', 'hide_transaction',
   'delete_transaction', 'read_tokens', 'read_credentials', 'create_bot_key', 'raise_rate_limit_self',
-  'blind_off', 'disable_blind', 'turn_off_blind', 'remove_stay_blind', 'reveal_amounts', 'show_amounts', 'read_hidden_amounts'];
+  'blind_off', 'disable_blind', 'turn_off_blind', 'remove_stay_blind', 'reveal_amounts', 'show_amounts', 'read_hidden_amounts',
+  // Seal my login: a bot can only see that a sealed login exists (label, sealedAt, status). Never reveal/create/delete/reseal/loosen.
+  'reveal_sealed_login', 'reveal_login', 'reveal_password', 'show_password', 'read_sealed_login', 'unseal', 'unseal_login',
+  'create_sealed_login', 'seal_login', 'delete_sealed_login', 'reseal_login', 'change_unlock_date', 'earlier_unlock_date'];
+const REVEAL_TYPES = ['reveal_sealed_login', 'reveal_login', 'reveal_password', 'show_password', 'read_sealed_login', 'unseal', 'unseal_login'];
 export const REQUEST_TYPES = ['resume_schedule', 'schedule_change', 'change_funding_account', 'revoke_authorization', 'grant_authorization', 'settings_change', 'withdrawal'];
 
 const KEY_RE = /^ldbk_([a-f0-9]{16})\.([A-Za-z0-9_-]{43})$/;
 const money = (c) => `$${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 
-function transferView(t) {
+export function transferView(t) {
   return { id: t.id, date: t.date, amountCents: t.amountCents, status: t.status, history: t.history.map(({ status, clockDate }) => ({ status, clockDate })),
     failure: t.failureReason ? { code: t.failureReason.achReturnCode || null, description: t.failureReason.description || null } : null,
     funding: `${t.funding.name} ••${t.funding.mask}`, destination: `${t.destination.name} ••${t.destination.mask}`, creditLeg: t.credit?.status || null };
 }
-function goalView(service) {
+export function goalView(service) {
   const g = service.goalView(); if (!g) return null;
   return { ...pick(g, ['id', 'cycle', 'name', 'targetCents', 'releaseDate', 'unlockRule', 'hardLock', 'status', 'lockedAt', 'reachedOn', 'remainingCents', 'progressSettled', 'draft']),
       hardshipEnabled: g.hardship.enabled, milestones: g.milestones.map(({ label, targetCents, reachedOn }) => ({ label, targetCents, reachedOn: reachedOn || null })) };
 }
-function scheduleView(service) {
+export function scheduleView(service) {
   const s = service.scheduleView(); if (!s) return null;
   return { ...pick(s, ['id', 'amountCents', 'frequency', 'benefitType', 'offsetDays', 'dayOfMonth', 'anchorDate', 'status', 'pausedReason', 'completedReason', 'description', 'nextPulls']),
     recentPeriods: s.periods.map(({ date, status, attempts, reasons }) => ({ date, status, attempts, lastReason: reasons.at(-1)?.reason || null })),
     authorization: service.s.authorization ? { status: service.s.authorization.status, acceptedAt: service.s.authorization.acceptedAt } : null };
 }
-const approvalView = (a) => pick(a, ['id', 'type', 'payload', 'summary', 'status', 'createdOn', 'expiresOn', 'requiresUnlockCode', 'decidedAt', 'error']);
+export const approvalView = (a) => pick(a, ['id', 'type', 'payload', 'summary', 'status', 'createdOn', 'expiresOn', 'requiresUnlockCode', 'decidedAt', 'error']);
+
+/** Bot or sync-inbox speed-up request -> pending schedule_change approval (raise only). */
+export function proposeSpeedUp(service, body, key) {
+  const s = service.s.schedule, m = Number(body.multiplier);
+  if (!s || !['active', 'paused', 'needs_authorization'].includes(s.status)) throw new AppError(409, 'no_schedule', 'No deposit schedule to speed up.');
+  if (![2, 3].includes(m)) throw new AppError(400, 'bad_multiplier', 'multiplier must be 2 or 3 (raise only).');
+  const payload = { amountCents: Math.round(s.amountCents * m) };
+  const summary = service.blindRedactBot() ? `Speed up: ${m === 2 ? 'double' : 'triple'} the deposit (needs a new ACH authorization)` : `Speed up: raise deposit ${money(s.amountCents)} → ${money(payload.amountCents)} (needs a new ACH authorization)`;
+  return service.createApproval({ type: 'schedule_change', payload, summary: summary + (body.reason ? ` (bot: ${String(body.reason).slice(0, 140)})` : ''), key });
+}
+
+/** Read-only picture of the app for the assistant: status, schedule, approvals + decisions, monthly moves. Never secrets.
+ * Redacted exactly like bot responses while Go Blind is on. */
+export function buildSnapshot(service) {
+  const t = service.totals();
+  const DECISIONS = /^(approval_(approved|rejected|expired|requested)|schedule_(paused|resumed|cancelled)|deposit_raised|monthly_move_|emergency_stop|authorization_(granted|revoked)|goal_(locked|reached|unlocked)|blind_on)/;
+  const snap = { kind: 'ldb-assistant-snapshot', v: 1, generatedAt: new Date().toISOString(), today: service.today(), sandbox: true, realMoneyEnabled: false,
+    blindMode: service.blindRedactBot(), goal: goalView(service), schedule: scheduleView(service),
+    balances: { settledLockedCents: t.vaultCents, pendingCents: t.pendingCents },
+    approvals: service.s.approvals.slice(0, 30).map(approvalView),
+    decisions: service.s.audit.filter((e) => DECISIONS.test(e.type)).slice(-40).reverse().map((e) => ({ at: e.at, clockDate: e.clockDate, type: e.type, actor: e.actor, detail: pick(e.detail || {}, ['id', 'type', 'month', 'date', 'from', 'via', 'to', 'leg', 'by', 'simulated', 'reason']) })),
+    monthlyMoves: service.moves.list.slice(0, 24).map((m) => service.moves.view(m)),
+    sealedLogins: service.sealed.list.map((r) => service.sealed.botView(r)),
+    note: 'Read-only snapshot. Only SETTLED deposits count toward the lock. Perform only monthly moves with status "approved", then mark them done.' };
+  return service.redactForBot(snap);
+}
 
 export function createBotApi({ service, store }) {
   const buckets = new Map();     // keyId -> { tokens, at }
@@ -57,6 +89,7 @@ export function createBotApi({ service, store }) {
         balances: { settledLockedCents: t.vaultCents, pendingCents: t.pendingCents, returnedCents: t.returnedCents, withdrawnCents: t.withdrawalsCents },
         schedule: scheduleView(service), pendingApprovals: service.s.approvals.filter((a) => a.status === 'pending').length,
         goalReached: service.s.goal?.status === 'unlocked', blindMode: service.blindRedactBot(), benefitsAlert: service.benefitsAlert()?.level || null,
+        sealedLogins: service.sealed.list.map((r) => service.sealed.botView(r)),
         note: 'Balances: only SETTLED deposits count toward the lock. Pending is shown separately.' };
     } },
     'GET /bot/v1/goals': { scope: 'read', fn: () => ({ active: goalView(service), cycles: service.s.cycles.map((c) => pick(c, ['cycle', 'name', 'targetCents', 'reachedOn', 'closedOn', 'mode', 'withdrawCents', 'remainingCents', 'nextTargetCents'])) }) },
@@ -97,8 +130,33 @@ export function createBotApi({ service, store }) {
       service.audit('bot_forbidden_request', { type: 'blind_off', keyId: key.id });
       throw new AppError(403, 'forbidden_for_bot', 'Only the user can turn Go Blind off, with the passcode. Bots never can.');
     } },
+    'GET /bot/v1/cards': { scope: 'read', fn: () => ({ cards: service.cardsView(service.blindRedactBot()) }) },
+    'POST /bot/v1/speed-up/propose': { scope: 'request', fn: ({ body, key }) => ({ httpStatus: 202, body: { approval: approvalView(proposeSpeedUp(service, body, key)), next: 'Waiting for the user to approve in the app (Inbox), then sign a new authorization.' } }) },
+    // Monthly move: the bot asks, the user approves in the app, the bot reads the decision, does the move itself, then marks it done.
+    'GET /bot/v1/monthly-moves': { scope: 'read', fn: () => ({ monthlyMoves: service.moves.list.slice(0, 24).map((m) => service.moves.view(m)),
+      note: 'Only moves with status "approved" or "in_progress" may be performed, one step at a time (nextLeg): Varo → Step (instant), Step → Current, then confirm arrival in Current. After each step POST /bot/v1/monthly-moves/complete with the confirmation. This app never moves the money. Step is a bridge: its balance should be zero after step 2.' }) },
+    'POST /bot/v1/monthly-moves/propose': { scope: 'request', fn: ({ body, key }) => {
+      const r = service.moves.propose(pick(body, ['amountCents', 'date', 'from', 'via', 'to', 'reason']), key);
+      return { httpStatus: 202, body: { move: r.move, approval: approvalView(r.approval), next: 'Waiting for the user to tap Approve in the app (Inbox).' } };
+    } },
+    'POST /bot/v1/monthly-moves/complete': { scope: 'request', fn: ({ body, key }) => service.moves.complete({ id: body.id, leg: body.leg, confirmation: body.confirmation, stepBalanceCents: body.stepBalanceCents }, `bot:${key.id}`) },
+    // One call with everything the assistant needs (same content as the encrypted sync snapshot of the static demo).
+    'GET /bot/v1/snapshot': { scope: 'read', fn: () => buildSnapshot(service) },
+    'GET /bot/v1/sealed-logins': { scope: 'read', fn: () => ({ sealedLogins: service.sealed.list.map((r) => service.sealed.botView(r)),
+      note: 'You can see that a sealed login exists, never its contents. Only the user can open it, and only after its unlock condition is met.' }) },
+    'POST /bot/v1/sealed-logins/reveal': { scope: 'read', fn: ({ body, key }) => {
+      const r = service.sealed.list.find((x) => x.id === body.id || x.label === body.label) || service.sealed.list[0];
+      service.audit('sealed_login_reveal_refused', { id: r?.id || null, label: r?.label || null, by: 'bot', keyId: key.id, reason: 'forbidden_for_bot' });
+      throw new AppError(403, 'forbidden_for_bot', 'Bots can never reveal a sealed login, not even after it unlocks. Only the user can open it in the app.');
+    } },
+    ...Object.fromEntries([['POST /bot/v1/sealed-logins', 'create_sealed_login'], ['POST /bot/v1/sealed-logins/delete', 'delete_sealed_login'],
+      ['POST /bot/v1/sealed-logins/reseal', 'reseal_login'], ['POST /bot/v1/sealed-logins/unlock', 'change_unlock_date']].map(([route, type]) => [route, { scope: 'read', fn: ({ key }) => {
+      service.audit('bot_forbidden_request', { type, keyId: key.id });
+      throw new AppError(403, 'forbidden_for_bot', 'Only the user can create, reseal, change or delete a sealed login, in the app.');
+    } }])),
     'POST /bot/v1/requests': { scope: 'request', fn: ({ body, key }) => {
       const type = String(body.type || '');
+      if (REVEAL_TYPES.includes(type)) service.audit('sealed_login_reveal_refused', { id: null, label: null, by: 'bot', keyId: key.id, reason: 'forbidden_for_bot', via: 'request' });
       if (FORBIDDEN_REQUEST_TYPES.includes(type)) {
         service.audit('bot_forbidden_request', { type, keyId: key.id });
         throw new AppError(403, 'forbidden_for_bot', `"${type}" is never available to a bot.`);

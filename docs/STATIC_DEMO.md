@@ -39,3 +39,14 @@ Deploy: push the contents of `demo/dist` to the `gh-pages` branch (GitHub Pages,
 | Offline | n/a | Service worker precaches everything; works offline after the first visit |
 | Production guard | `assertSandboxOnly()`, hard-coded `REAL_MONEY_ENABLED = false`, 6 go-live gates | No network provider bundled; same hard-coded flag and gates |
 | Security of the lock | Same Hard Lock rules | Same rules, but anyone with the device can clear site data. It's a demo, not a vault |
+
+## Seal my login, cards, monthly move and assistant sync in the demo
+
+- **Seal my login** uses WebCrypto AES-256-GCM (`demo/src/sealed-cipher.js`). It uses the same `sl1` format and associated data as the server, with a **non-extractable** key kept in IndexedDB (`ldb-vault-demo-keys`), falling back to an in-memory key.
+  - The unlock date uses the **device clock**, so changing the phone's clock could fool it. The server version uses the server clock.
+  - **Start over** is refused while a login is sealed. Clearing the site's data in the browser erases everything, sealed logins included, without revealing them. See `docs/SEALED_LOGIN.md`.
+- **Did-you-know cards, speed-up and the monthly move** run on the same shared service code as the server.
+  - The simulated bot (More → Bot) can read the sealed-login status (and is refused on reveal/delete), read cards, propose a faster deposit, and propose and record a monthly move.
+- **Assistant sync:** the demo has no server, so the assistant reads it through an encrypted snapshot pushed to a relay, or a downloaded file.
+  - The page's CSP allows a relay on `http://127.0.0.1:*` / `http://localhost:*`. Add a hosted relay at build time with `LDB_SYNC_RELAY_ORIGINS=https://relay.example npm run build`.
+  - The sync code is kept in this browser's localStorage. See `docs/ASSISTANT_SYNC.md`.

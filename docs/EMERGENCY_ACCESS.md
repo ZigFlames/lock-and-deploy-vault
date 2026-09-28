@@ -24,6 +24,9 @@ Every step is in the audit log: `hardship_requested`, `hardship_cancelled`, `har
 ### Go Blind (hide all amounts)
 Go Blind hides every dollar amount from you and from the bot, so you're not tempted to check. The lock is unchanged; only what you see changes. What stays visible, and every Emergency stop, Pause/Resume and Inbox control, keeps working. Turning it off needs your passcode (5 tries, then a 15-minute lockout). If you chose **stay blind until goal**, it can't be turned off at all until the vault unlocks, and the goal-reached banner still appears. Sandbox reset and "Start over" are refused while it's on. The **benefits guard** (I receive SSI) still warns you, without numbers, when settled savings get close to the SSI resource limit. Details: README → Go Blind.
 
+### Seal my login (the savings bank's login)
+The login for the separate savings bank (Current) can be sealed in the app: generated or entered, typed in at the bank, tested once, then sealed until a date and/or the goal. It can only be tightened after that. Nobody can open it early, including you, any passcode and the bot. The bank can still reset it after checking your identity, so a trusted person and the bank's own rules remain the real lock. See `docs/SEALED_LOGIN.md`.
+
 ## 2. Emergency stop: pause, never unlock
 
 **More → Emergency stop & your bank → "Emergency stop (does not unlock)"**. User only; the bot can't press or disable it.

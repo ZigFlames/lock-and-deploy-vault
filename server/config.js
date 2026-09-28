@@ -77,6 +77,12 @@ export function buildConfig(env = process.env) {
     port: Number(env.PORT || 5180),
     dataDir: path.resolve(env.DATA_DIR || './data'),
     tokenKey: env.TOKEN_ENCRYPTION_KEY || '',
+    // Seal my login: AES-256-GCM key (base64, 32 bytes) or a file holding it. Neither is ever committed.
+    sealedLoginKey: env.SEALED_LOGIN_KEY || '',
+    sealedLoginKeyFile: env.SEALED_LOGIN_KEY_FILE || '',
+    // Assistant sync relay for the static demo (stores ciphertext only). Off unless SYNC_RELAY=on.
+    syncRelay: env.SYNC_RELAY === 'on',
+    syncAllowedOrigins: String(env.SYNC_ALLOWED_ORIGINS || 'https://zigflames.com,http://127.0.0.1:4191').split(',').map((x) => x.trim()).filter(Boolean),
     schedulerIntervalSec: Number(env.SCHEDULER_INTERVAL_SECONDS || 60),
     demoClock: env.DEMO_CLOCK !== '0',
     // Simulated clock: SIM_DATE=YYYY-MM-DD pins the base date (tests / `npm run tick`); the demo clock offset is added on top.

@@ -1,7 +1,8 @@
 // JSON-file store with atomic writes and a cross-process lock.
 // Holds only provider tokens (encrypted) and IDs, account names + masks, goal/schedule/authorization records,
 // transfers, approvals, hashed bot keys, a hashed unlock code, and the append-only audit chain.
-// Never bank usernames, passwords, full account numbers or routing numbers.
+// Never plaintext bank usernames or passwords, full account numbers or routing numbers. The one exception is
+// "Seal my login": a login you chose to seal is kept only as an AES-256-GCM blob (key outside this file).
 //
 // Concurrency: every mutation runs inside store.withLock(fn):
 //   1. an in-process promise queue (so the timer and HTTP requests never interleave), then
@@ -12,6 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { emptyBlind } from './blind.js';
+import { emptyLostCard } from './sealed.js';
+import { emptyCards } from './tips.js';
 
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 20;
@@ -43,6 +46,12 @@ export function emptyState() {
     userAuth: null,       // { passcodeHash, createdAt }
     sessions: [],         // { idHash, createdAt, expiresAt }
     audit: [],            // append-only, hash-chained (oldest first)
+    sealedLogins: [],     // Seal my login: { id, label, unlockRule, unlockDate, goalId, blob (AES-256-GCM), sealedAt, ... } (secrets only inside blob)
+    sealedLoginDraft: null, // one login waiting to be sealed (encrypted, expires after 2 hours)
+    cards: emptyCards(),  // "Did you know?" cards: { unlocked: [{ n, id, unlockedAt, clockDate, seenAt }] }
+    lostCard: emptyLostCard(), // lost-card checklist: { items: { report_lost: { done, at }, ... }, updatedAt }
+    monthlyMoves: [],     // Monthly move requests: { id, approvalId, month, date, amountCents, from, to, status, confirmation } (records only; no money moves)
+    sync: { seen: [], lastPushAt: null, lastPullAt: null }, // assistant sync (static demo): ids of assistant messages already applied
     blind: emptyBlind(),  // Go Blind: { on, stayUntilGoal, stayGoalId, failures, lockedUntil, passcodeHash (demo only) }
     clock: { offsetDays: 0 },
     mock: { transfers: {} },
@@ -53,6 +62,9 @@ export function emptyState() {
 /** Upgrade a phase-1 db.json (version 1) in place. */
 export function migrate(raw) {
   const s = { ...emptyState(), ...raw };
+  if (!Array.isArray(s.sealedLogins)) s.sealedLogins = [];
+  if (!Array.isArray(s.monthlyMoves)) s.monthlyMoves = [];
+  if (!s.sync || !Array.isArray(s.sync.seen)) s.sync = { seen: [], lastPushAt: null, lastPullAt: null };
   if (!raw.version || raw.version < 2) {
     const old = Array.isArray(raw.audit) ? [...raw.audit].reverse() : []; // v1 stored newest first
     s.audit = [];
@@ -60,7 +72,7 @@ export function migrate(raw) {
     if (raw.goal && !raw.goal.id) s.goal = { __legacy: true, ...raw.goal };
     s.version = STATE_VERSION;
   }
-  for (const k of ['periods', 'vault', 'settings', 'clock', 'mock', 'plaid', 'blind']) if (!s[k] || typeof s[k] !== 'object') s[k] = emptyState()[k];
+  for (const k of ['periods', 'vault', 'settings', 'clock', 'mock', 'plaid', 'blind', 'lostCard', 'cards']) if (!s[k] || typeof s[k] !== 'object') s[k] = emptyState()[k];
   return s;
 }
 
