@@ -86,6 +86,13 @@ function banners() {
   for (const n of S.notifications) out.push(`<div class="banner" data-testid="notification"><span class="banner__icon">${n.type === 'goal_reached' ? '✓' : n.type.startsWith('milestone') ? '★' : '!'}</span><span class="banner__body"><strong>${esc(n.title)}</strong><br><span class="small muted">${esc(n.body || '')}</span></span><button class="x" data-action="dismiss" data-id="${esc(n.id)}" aria-label="Dismiss">×</button></div>`);
   return out.join('');
 }
+function homeCards() {
+  const cd = S.cards, sl = S.sealedLogins || [];
+  const latest = cd?.unlocked?.[0], speed = cd?.speedUp?.cards?.[0];
+  return `${celebrate()}${!sl.length ? '<a class="banner" href="#/setup" data-testid="setup-banner"><span class="banner__icon">1</span><span class="banner__body"><strong>Guided setup</strong><br><span class="small muted">Seal my login → unlock date → lost card → dashboard</span></span></a>' : ''}
+  ${sl.length ? `<a class="card card--sealed row-between" href="#/seal" data-testid="home-sealed"><span>🔒 <strong>${esc(sl[0].label)}</strong> <span class="small muted">${sl[0].status === 'unlocked' ? 'ready to open' : 'sealed'}</span></span>${sl[0].status === 'sealed' && sl[0].unlockAtMs ? countdown(sl[0].unlockAtMs) : ''}</a>` : ''}
+  ${latest || speed ? `<div class="section-title">Did you know?</div>${latest ? tipCard(latest) : ''}${speed ? tipCard(speed) : ''}<a class="btn btn--ghost btn--block" href="#/cards" data-testid="home-cards-link">All cards (${cd.unlocked.length})</a>` : ''}`;
+}
 function viewHome() {
   const g = S.goal, t = S.totals, s = S.schedule, blind = BLIND();
   const unlocked = g?.status === 'unlocked';
@@ -119,9 +126,10 @@ function viewHome() {
   ${g ? pendingVsSettled() : ''}
   ${blind ? '' : g?.milestones?.length ? `<div class="card"><h2>Milestones</h2>${g.milestones.map((m) => `<div class="row-between small"><span>${m.reachedOn ? '★' : '☆'} ${esc(m.label)}</span><span class="muted">${m.reachedOn ? `reached ${short(m.reachedOn)}` : `${money0(Math.max(0, m.targetCents - t.vaultCents))} to go`}</span></div>`).join('')}<div class="row-between small"><span>🔒 Goal ${money0(g.targetCents)} (unlock)</span><span class="muted">${unlocked ? `reached ${short(g.reachedOn)}` : `${money0(g.remainingCents)} to go`}</span></div></div>` : ''}
   ${S.overBenefitLimit && !blind ? `<div class="card card--warn"><strong class="warn">Benefit limit heads-up.</strong> <span class="small">This goal is above the SSI $2,000 resource limit for an individual. See the Authorize step and consider an ABLE account.</span></div>` : ''}
+  ${homeCards()}
   ${setupDone ? '' : `<div class="section-title">Setup</div>
   <div class="card"><ol class="steps">${steps.map(([label, done, href], i) => `<li><span class="dot ${done ? 'dot--done' : ''}">${done ? '✓' : i + 1}</span><a href="${href}">${esc(label)}</a></li>`).join('')}</ol></div>`}
-  <div class="card small muted">Provider: <strong class="gold">${esc(S.provider.label)}</strong>. The app stores only provider tokens (encrypted) and IDs, plus account names and last-4 digits. It never sees bank usernames or passwords and never touches bank login or account recovery. Real money is <strong>hard-disabled</strong>.</div>`;
+  <div class="card small muted">Provider: <strong class="gold">${esc(S.provider.label)}</strong>. The app stores only provider tokens (encrypted) and IDs, plus account names and last-4 digits. Bank linking never uses your bank username or password, and the app never touches bank login or account recovery. (Seal my login is separate: a login you choose to seal is stored encrypted and only shown after its unlock condition.) Real money is <strong>hard-disabled</strong>.</div>`;
 }
 
 // ---------------- Go Blind ----------------
@@ -384,6 +392,7 @@ function viewVault() {
       <button class="btn btn--block" data-mt type="submit">Request hardship release</button></form>`}
   </section>` : ''}
   <a class="btn btn--ghost btn--block" href="#/rollover">Preview Roll Over &amp; Relock</a>` : ''}
+  ${(S.sealedLogins || []).length ? `<div class="section-title">Sealed logins</div><div class="card">${S.sealedLogins.map((r) => `<a class="row-between small" href="#/seal"><span>${r.status === 'unlocked' ? '🔓' : '🔒'} ${esc(r.label)}</span><span class="muted">${r.status === 'unlocked' ? 'ready to open' : esc(RULE_TEXT[r.unlockRule])}</span></a>`).join('')}</div>` : ''}
   ${blind && (S.cycles.length || S.withdrawals.length) ? `<div class="section-title">History</div>${hiddenCard('History', `${S.cycles.length} past cycle(s): amounts hidden.`)}` : S.cycles.length || S.withdrawals.length ? `<div class="section-title">History</div><div class="card"><table class="mini">
     ${S.cycles.map((c) => `<tr><td>Cycle ${c.cycle}: ${esc(c.name)} ${money0(c.targetCents)} · ${esc(c.mode)}</td><td>${c.withdrawCents ? `−${money0(c.withdrawCents)}` : ''} → ${c.nextTargetCents ? money0(c.nextTargetCents) : 'closed'}</td></tr>`).join('')}
     ${S.withdrawals.map((w) => `<tr><td>${short(w.clockDate)} ${esc(w.kind.replace(/_/g, ' '))} (simulated)</td><td>−${money(w.amountCents)}</td></tr>`).join('')}</table></div>` : ''}`;
@@ -450,9 +459,16 @@ const SIM_BOT_LABELS = () => [
   ['prepare_rollover', BLIND() ? 'Prepare a rollover' : 'Prepare rollover 1000 → 4000'], ['blind_on', 'Turn Go Blind on'], ['try_unlock', 'Try to unlock (refused)'], ['try_lower', 'Try to lower goal (refused)'],
   ['try_disable_hard_lock', 'Try to turn off Hard Lock (refused)'], ['try_production', 'Try production mode (refused)'], ['try_delete_audit', 'Try to delete audit (refused)'],
   ['try_blind_off', 'Try to turn Go Blind off (refused)'], ['try_reveal_amounts', 'Try to read hidden amounts (refused)'],
+  ['sealed_status', 'See sealed logins'], ['try_reveal_login', 'Try to reveal sealed login (refused)'], ['try_delete_login', 'Try to delete sealed login (refused)'],
+  ['cards', 'Read Did-you-know cards'], ['propose_speed_up', 'Propose a faster deposit'],
+  ['propose_monthly_move', 'Propose monthly move (Varo → Step → Current)'], ['read_monthly_moves', 'Read monthly moves + decisions'], ['complete_monthly_move', 'Record next move step (simulated)'],
 ];
 function simBotSummary(r) {
   const b = r.body || {};
+  if (b.sealedLogins && !b.goal) return esc(b.sealedLogins.length ? b.sealedLogins.map((x) => `${x.label}: ${x.status} since ${new Date(x.sealedAt).toLocaleDateString()}`).join(' · ') + ' (no contents)' : 'No sealed logins.');
+  if (b.monthlyMoves) return esc(b.monthlyMoves.length ? b.monthlyMoves.slice(0, 3).map((m) => `${m.month}: ${m.status}${m.nextLeg ? `, next ${m.nextLeg}` : ''}`).join(' · ') : 'No monthly moves yet.') + (b.blindMode ? ' <span class="chip chip--blind" data-testid="sim-bot-blindmode">blindMode: true</span>' : '');
+  if (b.move) return esc(`${b.move.summary} — ${b.move.status}${b.move.nextLeg ? ` (next: ${b.move.legs.find((l) => l.id === b.move.nextLeg)?.label})` : ''}`) + (b.blindMode ? ' <span class="chip chip--blind" data-testid="sim-bot-blindmode">blindMode: true</span>' : '');
+  if (b.cards) return esc(`${b.cards.unlocked.length} card(s) unlocked${b.cards.unlocked[0] ? `, latest "${b.cards.unlocked[0].title}"` : ''}${b.cards.speedUp?.cards?.[0] ? ` · ${b.cards.speedUp.cards[0].tip}` : ''}`) + (b.blindMode ? ' <span class="chip chip--blind" data-testid="sim-bot-blindmode">blindMode: true</span>' : '');
   const text = b.message || b.approval?.summary || (b.goal && b.balances ? (b.blindMode ? `Goal "${b.goal.name}" · ${b.goal.status} · goal reached: ${b.goalReached ? 'yes' : 'no'} · deposits ${b.schedule?.status || 'none'} · amounts hidden` : `Goal ${money0(b.goal.targetCents)} · settled ${money(b.balances?.settledLockedCents)}`) : '') || b.note || b.error || 'OK';
   return `${esc(text)}${b.blindMode ? ' <span class="chip chip--blind" data-testid="sim-bot-blindmode">blindMode: true</span>' : ''}`;
 }
@@ -561,6 +577,12 @@ function viewBank() {
 // ---------------- More + Log ----------------
 function viewMore() {
   return `<h1>More</h1><nav class="card more-list">
+    <a href="#/setup" data-testid="more-setup">Guided setup <small>seal · unlock date · lost card · dashboard</small></a>
+    <a href="#/seal" data-testid="more-seal">Seal my login <small>${(S.sealedLogins || []).length ? `${S.sealedLogins.filter((r) => r.status === 'sealed').length} sealed` : 'none yet'}</small></a>
+    <a href="#/lostcard">Lost-card steps <small>${S.lostCard ? `${S.lostCard.steps.filter((x) => x.done).length}/${S.lostCard.steps.length}` : ''}</small></a>
+    <a href="#/cards" data-testid="more-cards">Did you know? cards <small>${S.cards?.unlocked.length || 0} unlocked</small></a>
+    <a href="#/moves" data-testid="more-moves">Monthly move <small>Varo → Step → Current · ${(S.monthlyMoves || []).filter((m) => ['approved', 'in_progress'].includes(m.status)).length} to do</small></a>
+    <a href="#/sync" data-testid="more-sync">Assistant sync <small>${S.simulation ? (localStorage.getItem('ldb-sync-code') ? 'sync code set' : 'not set up') : 'bot API'}</small></a>
     <a href="#/accounts">Accounts <small>${S.accounts.length} linked</small></a>
     <a href="#/plan">Plan <small>goal, Hard Lock, schedule</small></a>
     <a href="#/authorize">Authorize <small>${esc(S.authorization?.status || 'none')}</small></a>
@@ -668,10 +690,417 @@ async function openPlaidLink() {
 }
 
 
+// ---------------- Seal my login + Unlock date + Lost card + Setup wizard ----------------
+// Login values live only in this module's memory while their screen is open (the draft before sealing, or the reveal
+// after unlock). They are wiped when you seal or leave the screen. The server never sends them anywhere else.
+const RULE_TEXT = { date: 'On the date', goal: 'When the goal is hit', date_and_goal: 'Date AND goal (whichever is later)' };
+const FIELD_TEXT = { username: 'Username / email', password: 'Password', recoveryEmail: 'Recovery email', phone: 'Phone on the account', notes: 'Notes' };
+const newSealState = () => ({ mode: null, step: 1, draft: null, targetId: null, form: { label: 'Current Savings', passwordMode: 'generate', questions: [{ question: '', generate: true }] }, checks: {}, unlock: { unlockRule: 'date', unlockDate: '' }, wasOpen: false });
+let SEAL = newSealState();
+let REVEALED = {}; // id -> values (after unlock only)
+const plusDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-CA'); };
+function fmtCountdown(ms) {
+  if (ms <= 0) return 'Unlock date reached';
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return `${d}d ${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m ${String(sec).padStart(2, '0')}s`;
+}
+const countdown = (ms, id = '') => (ms ? `<span class="countdown" data-countdown="${esc(ms)}" ${id ? `data-testid="${id}"` : ''}>${esc(fmtCountdown(ms - Date.now()))}</span>` : '');
+setInterval(() => document.querySelectorAll('[data-countdown]').forEach((el) => { el.textContent = fmtCountdown(Number(el.dataset.countdown) - Date.now()); }), 1000);
+async function copyText(text, secret) {
+  try { await navigator.clipboard.writeText(text); } catch {
+    const t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.className = 'offscreen'; document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); } finally { t.remove(); }
+  }
+  toast(secret ? 'Copied. The clipboard is cleared in 60 seconds (best effort).' : 'Copied');
+  if (secret) setTimeout(() => { navigator.clipboard?.writeText('').catch(() => {}); }, 60_000);
+}
+function wipeSeal() { SEAL = newSealState(); REVEALED = {}; }
+const earliestUnlock = () => (S.sealedLogins || []).filter((r) => r.unlockDate).map((r) => r.unlockDate).sort().at(-1) || null;
+
+function valueRows(values, testPrefix = 'val') {
+  const rows = [];
+  for (const f of ['username', 'password', 'recoveryEmail', 'phone']) if (values[f]) rows.push([f, FIELD_TEXT[f], values[f]]);
+  (values.questions || []).forEach((q, i) => { if (q.answer) rows.push([`q${i}`, q.question || `Security answer ${i + 1}`, q.answer]); });
+  if (values.notes) rows.push(['notes', FIELD_TEXT.notes, values.notes]);
+  return rows.map(([k, label, v]) => `<div class="copy-row"><div class="copy-row__main"><div class="small muted">${esc(label)}</div><div class="secret ${k === 'password' ? 'secret--pw' : ''}" data-testid="${testPrefix}-${esc(k)}">${esc(v)}</div></div>
+    <button type="button" class="btn btn--sm" data-action="copy" data-copy="${esc(v)}" data-secret="1" data-testid="copy-${esc(k)}">Copy</button></div>`).join('');
+}
+function unlockFields(u, { forReseal = false } = {}) {
+  const goalOk = S.goal?.status === 'saving';
+  return `<div class="seg seg--3" role="radiogroup" data-testid="unlock-rule">
+      ${['date', 'goal', 'date_and_goal'].map((r) => `<label class="${u.unlockRule === r ? 'on' : ''}"><input type="radio" name="unlockRule" value="${r}" ${u.unlockRule === r ? 'checked' : ''} ${r !== 'date' && !goalOk ? 'disabled' : ''} data-testid="rule-${r}">${esc(RULE_TEXT[r])}</label>`).join('')}
+    </div>
+    <label class="field" data-rule-date ${u.unlockRule === 'goal' ? 'hidden' : ''}><span>Unlock date</span><input type="date" name="unlockDate" value="${esc(u.unlockDate)}" min="${esc(plusDays(1))}" data-testid="unlock-date"></label>
+    <div class="countdown-box" data-rule-date ${u.unlockRule === 'goal' ? 'hidden' : ''}><div class="small muted">Opens in</div><div class="countdown countdown--big" id="unlock-preview" data-testid="unlock-preview">${u.unlockDate ? esc(fmtCountdown(new Date(`${u.unlockDate}T00:00:00`) - Date.now())) : 'Pick a date'}</div></div>
+    <p class="small muted" data-mt>${goalOk ? `Goal: <strong>${esc(S.goal.name)}</strong>. "When the goal is hit" means the settled balance reaches it (same rule as the Hard Lock).` : 'Goal-based unlocks need a goal that is still saving (set one up in Plan).'} ${forReseal ? '' : 'After sealing, the date can only be pushed <strong>later</strong>, never earlier, and a goal can be added but not removed.'} The date uses ${S.simulation ? 'this device\'s clock' : 'the server\'s clock'} at midnight.</p>`;
+}
+function viewSealWizard(ctx) {
+  const w = SEAL, reseal = w.mode === 'reseal';
+  const target = reseal ? (S.sealedLogins || []).find((r) => r.id === w.targetId) : null;
+  const steps = reseal ? ['New password', 'Change it at the bank', ...(w.wasOpen ? ['New unlock date'] : []), 'Reseal'] : ['Login details', 'Enter it at the bank', 'Unlock date', 'Seal'];
+  const head = `<ol class="stepper" data-testid="seal-stepper">${steps.map((s, i) => `<li class="${i + 1 === w.step ? 'on' : i + 1 < w.step ? 'done' : ''}">${esc(s)}</li>`).join('')}</ol>`;
+  const f = w.form;
+  if (w.step === 1) {
+    return `${head}<form class="card" id="seal-form-1" data-testid="seal-step-1">
+      <h2>${reseal ? `Reseal "${esc(target?.label || '')}" with a new password` : 'Seal my login'}</h2>
+      <p class="small muted">${reseal ? 'Use this when the bank makes you change the password. You get a NEW password; the old one is never shown. Leave the other fields blank to keep what is sealed.' : 'Your savings login goes in here once, and then the app seals it until your unlock date. Use fake data to try it.'}</p>
+      ${reseal ? '' : `<label class="field"><span>Account label (not secret)</span><input type="text" name="label" value="${esc(f.label)}" maxlength="40" required data-testid="seal-label"></label>
+      <label class="field"><span>Login username or email</span><input type="text" name="username" value="${esc(f.username || '')}" autocomplete="off" autocapitalize="off" spellcheck="false" data-testid="seal-username"></label>`}
+      <div class="seg" role="radiogroup"><label class="${f.passwordMode === 'generate' ? 'on' : ''}"><input type="radio" name="passwordMode" value="generate" ${f.passwordMode === 'generate' ? 'checked' : ''} data-testid="pw-generate">Generate a strong password</label>
+        <label class="${f.passwordMode === 'enter' ? 'on' : ''}"><input type="radio" name="passwordMode" value="enter" ${f.passwordMode === 'enter' ? 'checked' : ''} data-testid="pw-enter">Enter ${reseal ? 'the new' : 'my existing'} password</label></div>
+      <label class="field" data-pw="enter" ${f.passwordMode === 'enter' ? '' : 'hidden'}><span>Password</span><input type="password" name="password" autocomplete="off" data-testid="seal-password"></label>
+      <details class="tools" data-pw="generate" ${f.passwordMode === 'generate' ? '' : 'hidden'}><summary>Password rules (banks differ)</summary>
+        <div class="grid2" data-mt><label class="field"><span>Length (12-64)</span><input type="number" name="length" min="12" max="64" value="${esc(f.length || 20)}" data-testid="pw-length"></label>
+        <label class="field"><span>How many symbols (0-6)</span><input type="number" name="symbolCount" min="0" max="6" value="${esc(f.symbolCount ?? 2)}"></label></div>
+        <label class="field"><span>Allowed symbols</span><input type="text" name="symbols" value="${esc(f.symbols ?? '!@#$%&*-_+=?')}" autocomplete="off" spellcheck="false" data-testid="pw-symbols"></label>
+        <label class="check"><input type="checkbox" name="avoidAmbiguous" ${f.avoidAmbiguous === false ? '' : 'checked'}><span class="small">Skip look-alike characters (0/O, 1/l/I)</span></label>
+      </details>
+      <label class="field"><span>${reseal ? 'New recovery email (optional)' : 'Recovery email (optional)'}</span><input type="email" name="recoveryEmail" value="${esc(f.recoveryEmail || '')}" autocomplete="off" data-testid="seal-recovery"></label>
+      <label class="field"><span>${reseal ? 'New phone number (optional)' : 'Phone number on the account (optional, e.g. a prepaid burner kept by someone you trust)'}</span><input type="tel" name="phone" value="${esc(f.phone || '')}" autocomplete="off" data-testid="seal-phone"></label>
+      ${reseal ? `<label class="field"><span>New username (optional)</span><input type="text" name="username" autocomplete="off" autocapitalize="off"></label>
+        <label class="check"><input type="checkbox" name="regenerateAnswers"><span class="small">Also make new random security answers (for the same questions)</span></label>`
+      : `<label class="field"><span>Notes (optional: security question answers, PIN hints)</span><textarea name="notes" rows="2" maxlength="1000" data-testid="seal-notes">${esc(f.notes || '')}</textarea></label>
+      <div class="small muted">Security question (optional)</div>
+      ${f.questions.map((q, i) => `<div class="q-row"><input type="text" name="q${i}" value="${esc(q.question || '')}" placeholder="e.g. Name of your first pet" data-testid="seal-q${i}">
+        <label class="check"><input type="checkbox" name="qgen${i}" ${q.generate ? 'checked' : ''} data-testid="seal-qgen${i}"><span class="small">Random answer</span></label>
+        <input type="text" name="qa${i}" value="${esc(q.answer || '')}" placeholder="Your answer" ${q.generate ? 'hidden' : ''}></div>`).join('')}`}
+      <div class="btn-row" data-mt><button class="btn btn--gold btn--block" type="submit" data-testid="seal-next-1">${f.passwordMode === 'generate' ? 'Generate & show my login' : 'Show my login'}</button></div>
+      ${ctx === 'seal' ? '<button class="btn btn--ghost btn--block" type="button" data-action="seal-cancel">Cancel</button>' : ''}
+    </form>`;
+  }
+  const d = w.draft;
+  if (w.step === 2) {
+    const boxes = reseal ? [['changedAtBank', 'I changed the password at the bank to exactly this'], ['confirmedLogin', 'I logged out and logged back in once with it, and it worked'], ['notSaved', 'I did not save it in my browser, phone or a password manager']]
+      : [['enteredAtBank', 'I entered these at the bank (signup or password change) exactly as shown'], ['confirmedLogin', 'I logged out and logged back in once with them, and it worked'], ['notSaved', 'I did not save the password in my browser, phone or a password manager']];
+    return `${head}<section class="card card--gold" data-testid="seal-step-2">
+      <h2>Type this at the bank now</h2>
+      <p class="small">Shown <strong>once</strong>. After you seal it, the app will not show it again until the unlock ${reseal ? 'condition' : 'date'}.${d.passwordInfo ? ` Password: ${esc(d.passwordInfo.length)} characters, about ${esc(d.passwordInfo.bits)} bits.` : ''}</p>
+      ${valueRows(d.values)}
+      ${reseal && d.keep?.length ? `<p class="small muted">Kept sealed (not shown): ${esc(d.keep.map((k) => FIELD_TEXT[k] || 'security answers').join(', '))}.</p>` : ''}
+      <p class="small warn">If your browser offers to save the password, choose <strong>Never</strong>. Test the login once: log out and back in at the bank.</p>
+      <form id="seal-checks" data-mt>${boxes.map(([k, l]) => `<label class="check"><input type="checkbox" name="${k}" ${w.checks[k] ? 'checked' : ''} data-testid="check-${k}"><span class="small">${esc(l)}</span></label>`).join('')}
+        <button class="btn btn--gold btn--block" data-mt type="submit" data-testid="seal-next-2" ${boxes.every(([k]) => w.checks[k]) ? '' : 'disabled'}>Next</button></form>
+      <button class="btn btn--ghost btn--block" data-mt data-action="seal-back" data-testid="seal-regenerate">The bank rejected it: change the rules and make a new one</button>
+    </section>`;
+  }
+  const unlockStep = reseal ? (w.wasOpen ? 3 : 0) : 3;
+  if (w.step === unlockStep) {
+    return `${head}<form class="card" id="seal-unlock" data-testid="seal-step-unlock"><h2>${reseal ? 'New unlock date' : 'When should it unlock?'}</h2>
+      <p class="small muted">${reseal ? 'This login had already opened, so resealing starts a new lock.' : 'Pick the unlock date. The login stays sealed until then. No passcode, no override, and the bot can never open it.'}</p>
+      ${unlockFields(w.unlock, { forReseal: reseal })}
+      <button class="btn btn--gold btn--block" data-mt type="submit" data-testid="seal-next-3">Next</button></form>`;
+  }
+  const phrase = reseal ? 'RESEAL MY LOGIN' : 'SEAL MY LOGIN';
+  const u = reseal && !w.wasOpen ? { unlockRule: target?.unlockRule, unlockDate: target?.unlockDate } : w.unlock;
+  const atMs = u.unlockDate ? new Date(`${u.unlockDate}T00:00:00`).getTime() : null;
+  return `${head}<form class="card danger-card" id="seal-final" data-testid="seal-step-final">
+    <h2>${reseal ? 'Reseal' : 'Seal'} "${esc(d.label)}"</h2>
+    <ul class="facts small"><li>Unlocks: <strong>${esc(RULE_TEXT[u.unlockRule] || '')}</strong>${u.unlockDate ? ` · ${esc(pretty(u.unlockDate))}` : ''}${u.unlockRule !== 'date' && S.goal ? ` · goal "${esc(S.goal.name)}"` : ''}</li>
+      ${atMs ? `<li>Opens in ${countdown(atMs, 'final-countdown')}</li>` : ''}
+      <li>After this, the values disappear. No passcode (not even Go Blind's), no override, no support path in this app, and the bot can't open, change or delete it.</li>
+      <li>The date can only move later. Deleting is refused while it is sealed.</li>
+      <li>Honest limit: your bank can still reset the login if you prove who you are. The real lock is the bank's own rules and a trusted person. <a href="#/lostcard">Lost-card steps</a> help.</li></ul>
+    <label class="field"><span>Type <strong>${esc(phrase)}</strong></span><input type="text" name="typed" autocomplete="off" autocapitalize="characters" data-testid="seal-typed"></label>
+    <button class="btn btn--danger btn--block" type="submit" data-testid="seal-confirm">${reseal ? 'Reseal it' : 'Seal it'}</button></form>`;
+}
+function sealedCard(r) {
+  const open = r.status === 'unlocked', vals = REVEALED[r.id];
+  const cond = [r.unlockDate ? `${r.dateMet ? '✓' : '○'} date ${pretty(r.unlockDate)}` : '', r.unlockRule !== 'date' ? `${r.goalMet ? '✓' : '○'} goal${r.goalName ? ` "${esc(r.goalName)}"` : ''} reached` : ''].filter(Boolean).join(' · ');
+  return `<section class="card ${open ? 'card--gold' : 'card--sealed'}" data-testid="sealed-card" data-id="${esc(r.id)}">
+    <div class="row-between"><h2>${open ? '🔓' : '🔒'} ${esc(r.label)}</h2><span class="pill ${open ? 'pill--unlocked' : 'pill--locked'}" data-testid="sealed-status">${open ? 'Ready to open' : 'Sealed'}</span></div>
+    <p class="small">${esc(RULE_TEXT[r.unlockRule])} · ${cond}</p>
+    ${!open && r.unlockAtMs ? `<div class="countdown-box"><div class="small muted">Opens in</div><div class="countdown countdown--big" data-countdown="${esc(r.unlockAtMs)}" data-testid="sealed-countdown">${esc(fmtCountdown(r.unlockAtMs - Date.now()))}</div></div>` : ''}
+    <p class="small muted">Sealed ${esc(new Date(r.sealedAt).toLocaleDateString())}${r.resealCount ? ` · resealed ${r.resealCount}×` : ''} · holds: ${esc(r.fields.map((f) => (FIELD_TEXT[f] || 'security answers').toLowerCase()).join(', '))}. Password ${r.passwordSource === 'entered' ? 'entered by you' : 'generated by the app'}.</p>
+    ${vals ? `<div data-testid="revealed">${valueRows(vals, 'rev')}</div><p class="small muted">Shown because the unlock condition is met. Hidden again when you leave this screen.</p>` : ''}
+    <div class="btn-row" data-mt>
+      ${open ? (vals ? '' : `<button class="btn btn--sm btn--gold" data-action="seal-reveal" data-id="${esc(r.id)}" data-testid="sealed-open">Open login</button>`)
+        : `<button class="btn btn--sm" data-action="seal-reveal" data-id="${esc(r.id)}" data-testid="sealed-try-open">Open login (locked)</button>`}
+      <button class="btn btn--sm" data-action="seal-reseal" data-id="${esc(r.id)}" data-testid="sealed-reseal">Reseal with new password</button>
+      <button class="btn btn--sm btn--danger" data-action="seal-delete" data-id="${esc(r.id)}" data-testid="sealed-delete">Delete</button>
+    </div>
+    <details class="tools"><summary>Push the unlock later · rename</summary>
+      <form class="stack" data-unlock-form="${esc(r.id)}" data-mt>
+        ${r.unlockRule !== 'goal' ? `<label class="field"><span>New unlock date (later only)</span><input type="date" name="unlockDate" value="${esc(r.unlockDate)}" min="${esc(r.unlockDate)}" data-testid="push-date"></label>` : ''}
+        ${r.unlockRule !== 'date_and_goal' ? `<label class="check"><input type="checkbox" name="both" ${S.goal?.status === 'saving' ? '' : 'disabled'}><span class="small">Require ${r.unlockRule === 'date' ? 'the goal too' : 'a date too'} (whichever is later)</span></label>${r.unlockRule === 'goal' ? `<label class="field"><span>Date</span><input type="date" name="unlockDate" min="${esc(plusDays(1))}"></label>` : ''}` : ''}
+        <button class="btn btn--sm" type="submit" data-testid="push-save">Save (tighten only)</button></form>
+      <form class="row" data-label-form="${esc(r.id)}" data-mt><input type="text" name="label" value="${esc(r.label)}" maxlength="40" class="grow"><button class="btn btn--sm" type="submit">Rename</button></form>
+    </details>
+  </section>`;
+}
+function viewSeal() {
+  const list = S.sealedLogins || [];
+  if (SEAL.mode) return `<h1>${SEAL.mode === 'reseal' ? 'Reseal login' : 'Seal my login'}</h1>${viewSealWizard('seal')}`;
+  return `<h1>Seal my login</h1>
+  <div class="card small muted">The login of your separate savings account (for example <strong>Current Savings</strong>) is sealed on ${S.simulation ? 'this device' : 'the server'} with AES-256-GCM until its unlock date and/or goal. Nobody can open it early in this app: not you, not a passcode, not the bot. <a href="#/lostcard">Lost-card checklist</a> · <a href="#/setup">Guided setup</a></div>
+  ${list.map(sealedCard).join('')}
+  ${list.length < 5 ? '<button class="btn btn--gold btn--block" data-action="seal-start" data-testid="seal-start">Seal a login</button>' : ''}
+  <p class="small muted" data-mt>Honest limits: ${S.simulation ? 'in this browser demo the key lives on this device, so a technical person with the device could decrypt; changing the phone\'s clock could also fool the date. Clearing site data erases it (without revealing it).' : 'whoever can read the server\'s key and data file could decrypt.'} Your bank can always reset the login after checking your identity. See docs/SEALED_LOGIN.md.</p>`;
+}
+const LOST_STEPS_HELP = {
+  report_lost: 'Report your <strong>Current</strong> debit card (and any virtual card) as lost or stolen, in the Current app\'s card settings or with Current support. Use the phone number or contact options shown in the Current app or on current.com. If they offer a replacement card, decline it or ask for it later.',
+  remove_wallet: 'iPhone: open <strong>Wallet</strong> → tap the Current card → tap ⋯ (More) → <strong>Card Details</strong> → <strong>Remove Card</strong>. Or <strong>Settings → Wallet &amp; Apple Pay</strong> → the card → <strong>Remove Card</strong>. Also check an Apple Watch and any other phone wallet.',
+  destroy_card: 'Cut the physical card through the chip and the number (or snap it), and throw the pieces away in different places.',
+  delete_app: 'After sealing: press and hold the Current app icon → <strong>Remove App</strong> → <strong>Delete App</strong>. Don\'t reinstall it until your unlock date.',
+  no_new_card: 'Only request a new card after your unlock date.',
+};
+function viewLostCard(ctx) {
+  const lc = S.lostCard || { steps: [] };
+  const until = earliestUnlock();
+  return `${ctx === 'setup' ? '' : '<h1>Lost-card steps</h1>'}<section class="card" data-testid="lost-card">
+    <h2>Cut off the card too</h2>
+    <p class="small muted">A sealed password doesn't help if the card still works. Do these once. Your ticks are saved and logged.</p>
+    ${lc.steps.map((st) => `<label class="lost-step ${st.done ? 'lost-step--done' : ''}"><input type="checkbox" data-lost="${esc(st.id)}" ${st.done ? 'checked' : ''} data-testid="lost-${esc(st.id)}">
+      <span><strong>${esc(st.label)}</strong><br><span class="small muted">${LOST_STEPS_HELP[st.id] || ''}${st.id === 'no_new_card' && until ? ` Your unlock date: <strong>${esc(pretty(until))}</strong>.` : ''}</span></span></label>`).join('')}
+    <p class="small ${lc.allDone ? 'ok' : 'muted'}" data-testid="lost-status">${lc.allDone ? 'All done. Nice work.' : `${lc.steps.filter((x) => x.done).length} of ${lc.steps.length} done.`}</p>
+    <p class="small muted">Honest limit: Current can still send a new card or restore access after checking your identity. The steps add friction; they aren't a legal lock.</p>
+  </section>`;
+}
+const SAMPLE = { amountCents: 10000, frequency: 'benefit', benefitType: 'ssi', offsetDays: 1 };
+function setupStage() {
+  if (!(S.sealedLogins || []).length) return SEAL.step >= 3 ? 2 : 1;
+  if (!S.lostCard?.allDone && !SETUP_SKIP_LOST) return 3;
+  return 4;
+}
+let SETUP_SKIP_LOST = false;
+function viewSetup() {
+  const stage = setupStage();
+  if (stage <= 2 && !SEAL.mode) SEAL.mode = 'new';
+  const names = ['Seal my login', 'Unlock date', 'Lost card', 'Dashboard'];
+  const bar = `<ol class="stepper stepper--big" data-testid="setup-stepper">${names.map((n, i) => `<li class="${i + 1 === stage ? 'on' : i + 1 < stage ? 'done' : ''}">${i + 1}. ${esc(n)}</li>`).join('')}</ol>`;
+  let body;
+  if (stage <= 2) body = viewSealWizard('setup');
+  else if (stage === 3) body = `${viewLostCard('setup')}<button class="btn btn--block" data-action="setup-lost-next" data-testid="setup-lost-next">${S.lostCard?.allDone ? 'Next: dashboard' : 'I\'ll finish these later: next'}</button>`;
+  else {
+    const auth = S.authorization?.status === 'active';
+    body = `<section class="card" data-testid="setup-dashboard"><h2>Lock &amp; Deploy dashboard</h2>
+      <p class="small muted">Automatic deposits into the savings, goal tracking, Go Blind and the SSI warning. ${S.provider.id === 'mock' ? 'Try it with sample data: two fictional banks, <strong>$100/month</strong> the day after SSI arrives, goal Mattress $3,000, SSI guard on.' : ''}</p>
+      ${S.schedule ? `<p class="small ok">Deposits set: ${esc(S.schedule.description || '')}</p>` : S.provider.id === 'mock' ? '<button class="btn btn--gold btn--block" data-action="setup-sample" data-testid="setup-sample">Load sample data ($100/month)</button>' : '<a class="btn btn--block" href="#/accounts">Link accounts</a>'}
+      ${S.schedule && !auth ? `<div data-mt><label class="field"><span>Your full name (signs the sandbox ACH authorization)</span><input type="text" id="setup-signer" value="Sample User" data-testid="setup-signer"></label>
+        <label class="check"><input type="checkbox" id="setup-auth-box" data-testid="setup-auth-box"><span class="small">I authorize these recurring sandbox debits (no real money). The goal locks when I authorize.</span></label>
+        <button class="btn btn--gold btn--block" data-mt data-action="setup-authorize" data-testid="setup-authorize">Authorize &amp; start deposits</button></div>` : ''}
+      ${auth ? `<p class="small ok" data-testid="setup-done">All set: deposits are on and the goal is locked.</p>
+        <div class="btn-row"><a class="btn btn--gold" href="#/" data-testid="setup-open-dashboard">Open dashboard</a>${S.blind?.on ? '' : '<button class="btn" data-action="blind-on-open" data-testid="setup-go-blind">Go Blind (optional)</button>'}<a class="btn" href="#/cards">Did you know? cards</a></div>` : ''}
+    </section>`;
+  }
+  return `<h1>Guided setup</h1>${bar}${body}`;
+}
+
+// ---------------- Did you know? cards ----------------
+function tipCard(c, { big = false } = {}) {
+  return `<article class="tipcard tipcard--${esc(c.tier || c.kind)} ${big ? 'tipcard--big' : ''}" data-testid="tip-card">
+    <div class="tipcard__head">${esc(c.heading || 'Did you know?')}</div>
+    <h3>${esc(c.title)}</h3><p class="small">${esc(c.tip)}</p>
+    ${c.cheer ? `<p class="small gold">${esc(c.cheer)}</p>` : ''}
+    ${c.ssiReminder ? `<p class="small warn" data-testid="ssi-reminder">${esc(c.ssiReminder)}</p>` : ''}
+    ${c.action ? `<button class="btn btn--sm btn--gold" data-action="raise" data-mult="${esc(c.action.multiplier)}" data-testid="raise-x${esc(c.action.multiplier)}">${esc(c.action.label)}</button><p class="small muted" data-mt>${esc(c.action.note)}</p>` : ''}
+    <p class="tiny muted">${esc(c.note || 'General information, not financial advice.')}</p></article>`;
+}
+function viewCards() {
+  const cd = S.cards || { unlocked: [], speedUp: { cards: [] } };
+  return `${celebrate()}<h1>Did you know?</h1>
+  <p class="small muted">${cd.blind ? 'Every settled milestone' : 'Every settled $100'} you save unlocks a new card (pending money doesn't count). Tips get more advanced as you go. General information, not financial advice.</p>
+  ${cd.speedUp?.cards?.length ? `<div class="section-title">Speed up (from your real plan)</div>${cd.speedUp.cards.map((c) => tipCard(c)).join('')}` : ''}
+  ${!cd.blind && cd.next ? `<div class="card small" data-testid="next-card">Next card at ${money0(cd.next.atCents)} settled · ${money0(cd.next.toGoCents)} to go.</div>` : ''}
+  <div class="section-title">Your collection</div>
+  ${cd.unlocked.length ? cd.unlocked.map((c) => tipCard(c)).join('') : `<div class="card small muted">No cards yet. Your first one unlocks with your first settled ${cd.blind ? 'milestone' : '$100'}.</div>`}
+  ${cd.blind ? '<p class="small muted">Go Blind is on: cards show no amounts or card numbers.</p>' : ''}`;
+}
+// Celebration: an inline card with a short confetti burst at the top of Home / Cards (not a blocking modal).
+function celebrate() {
+  const cd = S?.cards; if (!cd?.unseen) return '';
+  const c = cd.unlocked.find((x) => !x.seen) || cd.unlocked[0];
+  return `<section class="celebrate" role="status" aria-label="New card unlocked" data-testid="celebrate">
+    <div class="confetti" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<i class="c c${i % 9}"></i>`).join('')}</div>
+    <div class="celebrate__body"><div class="burst" aria-hidden="true">★</div><h2>${cd.unseen > 1 ? `${cd.blind ? 'New milestones' : `${cd.unseen} new cards`} unlocked` : 'New milestone unlocked'}</h2>
+    ${tipCard(c, { big: true })}
+    <button class="btn btn--gold btn--block" data-mt data-action="cards-seen" data-testid="celebrate-ok">Nice!</button></div></section>`;
+}
+function readSealForm1(f) {
+  const d = new FormData(f), w = SEAL.form;
+  Object.assign(w, { label: d.get('label') ?? w.label, username: d.get('username') || '', passwordMode: d.get('passwordMode') || 'generate', recoveryEmail: d.get('recoveryEmail') || '', phone: d.get('phone') || '', notes: d.get('notes') || '',
+    length: Number(d.get('length') || 20), symbolCount: Number(d.get('symbolCount') ?? 2), symbols: d.get('symbols') ?? '!@#$%&*-_+=?', avoidAmbiguous: d.get('avoidAmbiguous') === 'on', regenerateAnswers: d.get('regenerateAnswers') === 'on' });
+  w.questions = w.questions.map((q, i) => ({ question: d.get(`q${i}`) || '', generate: d.get(`qgen${i}`) === 'on', answer: d.get(`qa${i}`) || '' }));
+  return { password: d.get('password') || '' };
+}
+function wireSealWizard(ctx) {
+  const w = SEAL;
+  if (!w.draft && S.sealedLoginDraft && !w.resuming) { // page reloaded mid-flow: the draft is still on the server (2 hours)
+    w.resuming = true;
+    api('/api/sealed-logins/draft').then((r) => { Object.assign(SEAL, { mode: r.draft.kind === 'reseal' ? 'reseal' : 'new', targetId: r.draft.targetId, draft: r.draft, step: 2 }); render(); }).catch(() => {});
+  }
+  const f1 = $('#seal-form-1');
+  if (f1) {
+    const sync = () => { const m = new FormData(f1).get('passwordMode'); f1.querySelectorAll('[data-pw]').forEach((el) => { el.hidden = el.dataset.pw !== m; }); f1.querySelectorAll('.seg label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
+      w.form.questions.forEach((_, i) => { const g = f1[`qgen${i}`], a = f1[`qa${i}`]; if (g && a) a.hidden = g.checked; }); };
+    f1.addEventListener('change', sync);
+    f1.onsubmit = async (e) => {
+      e.preventDefault();
+      const { password } = readSealForm1(f1); const x = w.form;
+      const passwordOptions = { length: x.length, symbolCount: x.symbolCount, symbols: x.symbols, avoidAmbiguous: x.avoidAmbiguous };
+      const body = w.mode === 'reseal'
+        ? { id: w.targetId, passwordMode: x.passwordMode, password, passwordOptions, replace: { username: x.username, recoveryEmail: x.recoveryEmail, phone: x.phone }, regenerateAnswers: x.regenerateAnswers }
+        : { label: x.label, username: x.username, passwordMode: x.passwordMode, password, passwordOptions, recoveryEmail: x.recoveryEmail, phone: x.phone, notes: x.notes, questions: x.questions };
+      try { const r = await api(w.mode === 'reseal' ? '/api/sealed-logins/reseal/draft' : '/api/sealed-logins/draft', body); w.draft = r.draft; w.step = 2; w.checks = {}; render(); window.scrollTo(0, 0); } catch (err) { toast(err.message, true); }
+    };
+  }
+  const fc = $('#seal-checks');
+  if (fc) {
+    fc.onchange = () => { for (const el of fc.querySelectorAll('input[type=checkbox]')) w.checks[el.name] = el.checked; fc.querySelector('button').disabled = ![...fc.querySelectorAll('input[type=checkbox]')].every((el) => el.checked); };
+    fc.onsubmit = (e) => { e.preventDefault(); w.step = 3; render(); window.scrollTo(0, 0); };
+  }
+  const fu = $('#seal-unlock');
+  if (fu) {
+    const upd = () => { const d = new FormData(fu); const rule = d.get('unlockRule'), date = d.get('unlockDate');
+      fu.querySelectorAll('[data-rule-date]').forEach((el) => { el.hidden = rule === 'goal'; }); fu.querySelectorAll('.seg label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
+      $('#unlock-preview').textContent = date ? fmtCountdown(new Date(`${date}T00:00:00`) - Date.now()) : 'Pick a date'; w.unlock = { unlockRule: rule, unlockDate: date || '' }; };
+    fu.addEventListener('input', upd); fu.addEventListener('change', upd);
+    fu.onsubmit = (e) => { e.preventDefault(); upd(); if (w.unlock.unlockRule !== 'goal' && !w.unlock.unlockDate) return toast('Pick an unlock date.', true); w.step += 1; render(); window.scrollTo(0, 0); };
+  }
+  const ff = $('#seal-final');
+  if (ff) ff.onsubmit = async (e) => {
+    e.preventDefault();
+    const typed = new FormData(ff).get('typed');
+    const reseal = w.mode === 'reseal';
+    const body = reseal ? { draftId: w.draft.id, typed, changedAtBank: !!w.checks.changedAtBank, confirmedLogin: !!w.checks.confirmedLogin, ...(w.wasOpen ? w.unlock : {}) }
+      : { draftId: w.draft.id, typed, enteredAtBank: !!w.checks.enteredAtBank, confirmedLogin: !!w.checks.confirmedLogin, ...w.unlock };
+    try {
+      await api(reseal ? '/api/sealed-logins/reseal' : '/api/sealed-logins/seal', body);
+      navigator.clipboard?.writeText('').catch(() => {});
+      wipeSeal(); toast(reseal ? 'Resealed. The new password is sealed.' : 'Sealed. It stays sealed until the unlock condition is met.');
+      if (ctx !== 'setup') location.hash = '#/seal';
+      await refresh(); window.scrollTo(0, 0);
+    } catch (err) { toast(err.message, true); }
+  };
+}
+function wireSeal() {
+  wireSealWizard('seal');
+  document.querySelectorAll('form[data-unlock-form]').forEach((f) => { f.onsubmit = (e) => {
+    e.preventDefault(); const id = f.dataset.unlockForm, r = S.sealedLogins.find((x) => x.id === id), d = new FormData(f);
+    const unlockRule = d.get('both') === 'on' ? 'date_and_goal' : r.unlockRule;
+    act(() => api('/api/sealed-logins/unlock', { id, unlockRule, unlockDate: d.get('unlockDate') || r.unlockDate || undefined }), 'Unlock updated (tighten only)');
+  }; });
+  document.querySelectorAll('form[data-label-form]').forEach((f) => { f.onsubmit = (e) => { e.preventDefault(); act(() => api('/api/sealed-logins/label', { id: f.dataset.labelForm, label: new FormData(f).get('label') }), 'Label saved'); }; });
+}
+function wireLostCard() {
+  document.querySelectorAll('[data-lost]').forEach((el) => { el.onchange = () => act(() => api('/api/lost-card', { item: el.dataset.lost, done: el.checked })); });
+}
+function wireSetup() { wireSealWizard('setup'); wireLostCard(); }
+async function loadSample() {
+  const st0 = S;
+  if (!st0.accounts.some((x) => x.mask === '4821')) await api('/api/link/exchange', { publicToken: 'mock-public-mock_goldcoast-5a3f1e01' });
+  if (!st0.accounts.some((x) => x.mask === '9034')) await api('/api/link/exchange', { publicToken: 'mock-public-mock_harbor-7b2c9d02' });
+  const st = await api('/api/state');
+  const fund = st.accounts.find((x) => x.mask === '4821'), dest = st.accounts.find((x) => x.mask === '9034');
+  if (!fund || !dest) throw new Error('Sample banks could not be linked. Link any two accounts on the Accounts screen instead.');
+  await api('/api/accounts/roles', { fundingAccountId: fund.id, destinationAccountId: dest.id });
+  if (st.goal?.status === 'saving' && !st.goal.lockedAt && !st.blind?.redacted) await api('/api/goal', { name: 'Mattress', targetCents: Math.max(300000, st.goal.targetCents || 0) });
+  await api('/api/schedule', SAMPLE);
+  await api('/api/benefit-ack', { accepted: true, version: st.benefitWarning.version });
+  await api('/api/settings', { benefits: { receivesSSI: true } });
+}
+
+// ---------------- Monthly move + assistant sync ----------------
+const MOVE_STATUS = { awaiting_approval: 'waiting for your approval', approved: 'approved: assistant will do it', in_progress: 'in progress', done: 'done', rejected: 'rejected', expired: 'expired', cancelled: 'cancelled' };
+function viewMoves() {
+  const mv = S.monthlyMoves || [], blind = !!S.blind?.redacted;
+  const zero = blind ? 'zero' : '$0';
+  return `<h1>Monthly move</h1>
+  <div class="card small" data-testid="moves-explain"><strong>Three banks, one monthly move.</strong>
+    <ol class="legs-help"><li><strong>Varo</strong>: your SSI lands here; spending money.</li><li><strong>Step</strong>: a bridge only. Its balance stays at ${zero}.</li><li><strong>Current</strong>: sealed, locked savings. Your assistant handles it on current.com (desktop web). You never open it.</li></ol>
+    Each month your assistant asks to move money. You tap <strong>Approve</strong> in the Inbox. Then your assistant does three steps itself and records each one here:
+    <ol class="legs-help"><li>Varo → Step (instant)</li><li>Step → Current (may take 1-3 business days, but it leaves Step right away)</li><li>Assistant confirms arrival in Current</li></ol>
+    <strong>This app never moves that money.</strong></div>
+  <div class="banner banner--warn" data-testid="step-zero-reminder"><span class="banner__icon">0</span><span class="banner__body"><strong>Step balance should be ${zero}</strong><br><span class="small">Step is only a bridge. After step 2 nothing should be left in Step. If something is, it should go on to Current.</span></span></div>
+  ${S.pendingApprovals ? `<a class="btn btn--gold btn--block" href="#/inbox" data-testid="moves-inbox">Open Inbox (${S.pendingApprovals} waiting)</a>` : ''}
+  <div class="section-title">Moves</div>
+  <div data-testid="moves-list">${mv.length ? mv.map((m) => `<article class="card move move--${esc(m.status)}" data-testid="move-card">
+    <div class="row-between"><span class="chip">Varo → Step → Current</span><span class="chip ${m.status === 'done' ? 'chip--ok' : ''}" data-testid="move-status">${esc(MOVE_STATUS[m.status] || m.status)}</span></div>
+    <p data-mt><strong>${esc(m.summary)}</strong></p>
+    <ol class="legs" data-testid="move-legs">${(m.legs || []).map((l, i) => `<li class="leg leg--${esc(l.status)} ${m.nextLeg === l.id ? 'leg--next' : ''}"><span class="leg__n">${l.status === 'done' ? '✓' : i + 1}</span><span><strong>${esc(l.label)}</strong>${l.status === 'done' ? `<br><span class="small ok">Confirmation <code>${esc(l.confirmation)}</code>${l.simulated ? ' (simulated)' : ''}</span>` : m.nextLeg === l.id ? '<br><span class="small gold">Next</span>' : ''}</span></li>`).join('')}</ol>
+    ${m.stepBalanceZero === false ? `<p class="small warn" data-testid="step-not-zero">Step still shows a balance after step 2. It should be ${zero}: move the rest on to Current.</p>` : m.stepBalanceZero ? `<p class="small ok">Step balance back to ${zero}.</p>` : ''}
+    <p class="small muted">${esc(pretty(m.date))} · asked by ${esc(m.requestedBy)}${m.decidedAt ? ` · decided ${esc(new Date(m.decidedAt).toLocaleString())}` : ''}</p>
+    ${['approved', 'in_progress'].includes(m.status) ? `<button class="btn btn--sm" data-action="move-sim" data-id="${esc(m.id)}" data-testid="move-sim">Simulate completion (prototype)</button><p class="tiny muted">In real life your assistant does each step at the banks, then records the bank's confirmation here.</p>` : ''}
+  </article>`).join('') : `<div class="card small muted">No monthly moves yet. ${S.simulation ? 'Try it: More → Bot → "Propose monthly move" (the simulated assistant asks), then approve it in the Inbox.' : 'Your assistant asks with POST /bot/v1/monthly-moves/propose.'}</div>`}</div>
+  <p class="small muted">Prototype with fake data. Sandbox only: no real money moves.</p>`;
+}
+
+const SYNC_K = { code: 'ldb-sync-code', relay: 'ldb-sync-relay', last: 'ldb-sync-last' };
+let syncShowCode = false;
+const b64u = (buf) => { const a = new Uint8Array(buf); let s = ''; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+function parseSyncCodeB(code) {
+  const [p, channel, k] = String(code || '').trim().split('.');
+  if (p !== 'ldbsync1' || !/^[A-Za-z0-9_-]{22}$/.test(channel || '') || !/^[A-Za-z0-9_-]{43}$/.test(k || '')) throw new Error('No valid sync code on this device. Create one first.');
+  return { channel, key: unb64u(k) };
+}
+async function sealSyncB(obj, { channel, key }, slot) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const k = await crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['encrypt']);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(`ldb-sync:v1:${channel}:${slot}`) }, k, new TextEncoder().encode(JSON.stringify(obj)));
+  return { v: 1, alg: 'A256GCM', channel, slot, seq: Date.now(), at: new Date().toISOString(), iv: b64u(iv), ct: b64u(ct) };
+}
+async function openSyncB(env, { channel, key }, slot) {
+  if (!env || env.v !== 1 || env.channel !== channel || env.slot !== slot) throw new Error('Assistant message is not for this sync code.');
+  const k = await crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt']);
+  try { return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64u(env.iv), additionalData: new TextEncoder().encode(`ldb-sync:v1:${channel}:${slot}`) }, k, unb64u(env.ct)))); }
+  catch { throw new Error('Could not decrypt the assistant\'s message (wrong sync code or changed data). Nothing was applied.'); }
+}
+const relayBase = () => (localStorage.getItem(SYNC_K.relay) || '').replace(/\/+$/, '').replace(/\/sync\/v1$/, '');
+async function syncNow() {
+  const code = parseSyncCodeB(localStorage.getItem(SYNC_K.code)); const base = relayBase();
+  if (!base) throw new Error('Add a relay address first, or use "Download encrypted snapshot".');
+  const push = async () => { const { snapshot } = await api('/api/sync/snapshot', {}); const env = await sealSyncB(snapshot, code, 'app');
+    const r = await fetch(`${base}/sync/v1/${code.channel}/app`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(env) });
+    if (!r.ok) throw new Error(`Relay refused the snapshot (HTTP ${r.status}).`); };
+  await push();
+  let applied = [];
+  const g = await fetch(`${base}/sync/v1/${code.channel}/bot`, { cache: 'no-store' });
+  if (g.ok) { const payload = await openSyncB(await g.json(), code, 'bot'); applied = (await api('/api/sync/inbox', payload)).results || []; }
+  else if (g.status !== 404) throw new Error(`Relay error reading assistant messages (HTTP ${g.status}).`);
+  if (applied.some((x) => x.status === 'applied')) await push(); // so the assistant sees the new pending approvals
+  const last = { at: new Date().toISOString(), applied: applied.filter((x) => x.status === 'applied').length, refused: applied.filter((x) => ['refused', 'failed'].includes(x.status)).length };
+  localStorage.setItem(SYNC_K.last, JSON.stringify(last));
+  return last;
+}
+async function downloadSnapshot() {
+  const code = parseSyncCodeB(localStorage.getItem(SYNC_K.code));
+  const { snapshot } = await api('/api/sync/snapshot', {});
+  const env = await sealSyncB(snapshot, code, 'app');
+  const url = URL.createObjectURL(new Blob([JSON.stringify(env, null, 1)], { type: 'application/json' }));
+  const a = document.createElement('a'); a.href = url; a.download = `lock-and-deploy-snapshot-${S.today}.json`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+function viewSync() {
+  const code = localStorage.getItem(SYNC_K.code), last = (() => { try { return JSON.parse(localStorage.getItem(SYNC_K.last) || 'null'); } catch { return null; } })();
+  const design = `<section class="card small" data-testid="sync-design"><h2>How your assistant reads this app</h2>
+    <p><strong>Server version (recommended for real use):</strong> the app runs on a small server; your assistant reads it directly with a bot key (<code>GET /bot/v1/snapshot</code>). It can ask for things, but only you can approve them.</p>
+    <p><strong>This phone demo (no server):</strong> your data lives only in this browser. To share it, the app makes a secret <strong>sync code</strong> you give your assistant once. "Sync now" locks a read-only snapshot (plan, approvals, your decisions, monthly moves; never passwords; amounts hidden while Go Blind is on) with that code (AES-256-GCM) and drops it at a small <strong>relay</strong>. The relay only ever sees scrambled data. Your assistant unlocks it with the code, and can leave requests the same way (for example this month's instant move). The app turns them into normal approvals in your Inbox.</p>
+    <p class="muted">No relay yet? "Download encrypted snapshot" saves the same locked file for your assistant. Anyone with the sync code can read the snapshot, so treat it like a password.</p></section>`;
+  if (!S.simulation) return `<h1>Assistant sync</h1>${design}<div class="card small">This is the server version: create a bot key on the <a href="#/bot">Bot</a> screen and your assistant reads <code>/bot/v1/snapshot</code> and <code>/bot/v1/monthly-moves</code>. No sync code needed.</div>`;
+  return `<h1>Assistant sync</h1>${design}
+  <section class="card" data-testid="sync-code-card"><h2>Sync code</h2>
+    ${code ? `<p class="small ok">A sync code is saved on this device (ends in …${esc(code.slice(-4))}).</p>
+      ${syncShowCode ? `<div class="copy-row"><div class="copy-row__main"><div class="secret" data-testid="sync-code">${esc(code)}</div></div><button class="btn btn--sm" data-action="copy" data-copy="${esc(code)}" data-secret="1" data-testid="copy-sync-code">Copy</button></div>` : ''}
+      <div class="btn-row"><button class="btn btn--sm" data-action="sync-show" data-testid="sync-show">${syncShowCode ? 'Hide code' : 'Show code to give my assistant'}</button><button class="btn btn--sm btn--ghost" data-action="sync-forget" data-testid="sync-forget">Forget code</button></div>`
+      : '<p class="small muted">None yet.</p><button class="btn btn--gold" data-action="sync-create" data-testid="sync-create">Create sync code</button>'}
+  </section>
+  <section class="card"><h2>Relay</h2>
+    <form id="sync-relay-form" class="row-between"><input class="grow" name="relay" type="url" inputmode="url" placeholder="http://127.0.0.1:5190" value="${esc(relayBase())}" data-testid="sync-relay"><button class="btn btn--sm" data-testid="sync-relay-save">Save</button></form>
+    <p class="tiny muted">The server prototype includes a relay (start it with SYNC_RELAY=on). It is not hosted for you; see docs/ASSISTANT_SYNC.md.</p>
+  </section>
+  <div class="btn-row"><button class="btn btn--gold" data-action="sync-now" data-testid="sync-now" ${code ? '' : 'disabled'}>Sync now</button><button class="btn" data-action="sync-download" data-testid="sync-download" ${code ? '' : 'disabled'}>Download encrypted snapshot</button></div>
+  <p class="small muted" data-testid="sync-status">${last ? `Last sync ${esc(new Date(last.at).toLocaleString())}: ${last.applied} assistant request(s) applied${last.refused ? `, ${last.refused} refused` : ''}.` : 'Not synced yet.'}${S.sync?.lastPushAt ? ` Last snapshot ${esc(new Date(S.sync.lastPushAt).toLocaleString())}.` : ''}</p>`;
+}
+function wireSync() {
+  const f = $('#sync-relay-form');
+  if (f) f.onsubmit = (e) => { e.preventDefault(); const v = new FormData(f).get('relay').trim(); if (v && !/^https?:\/\//.test(v)) return toast('Relay address must start with https:// (or http:// for this computer).', true); localStorage.setItem(SYNC_K.relay, v); toast(v ? 'Relay saved' : 'Relay removed'); render(); };
+}
+
 // ---------------- Wiring ----------------
 const views = { home: viewHome, accounts: viewAccounts, plan: viewPlan, authorize: viewAuthorize, transfers: viewTransfers, log: viewLog,
-  vault: viewVault, rollover: viewRollover, inbox: viewInbox, bot: viewBot, settings: viewSettings, bank: viewBank, emergency: viewBank, more: viewMore };
-const TAB_OF = { accounts: 'more', plan: 'more', authorize: 'more', rollover: 'vault', bot: 'more', settings: 'more', bank: 'more', emergency: 'more', log: 'more' };
+  vault: viewVault, rollover: viewRollover, inbox: viewInbox, bot: viewBot, settings: viewSettings, bank: viewBank, emergency: viewBank, more: viewMore,
+  seal: viewSeal, setup: viewSetup, lostcard: () => viewLostCard('page'), cards: viewCards, moves: viewMoves, sync: viewSync };
+const TAB_OF = { accounts: 'more', plan: 'more', authorize: 'more', rollover: 'vault', bot: 'more', settings: 'more', bank: 'more', emergency: 'more', log: 'more', seal: 'more', setup: 'more', lostcard: 'more', cards: 'home', moves: 'inbox', sync: 'more' };
 function route() { return (location.hash.replace(/^#\/?/, '') || 'home').split('?')[0]; }
 
 function render() {
@@ -690,7 +1119,7 @@ function render() {
   const badge = $('#inbox-badge'); badge.hidden = !S.pendingApprovals; badge.textContent = S.pendingApprovals || '';
   $('#mode-badge').textContent = S.simulation ? 'Simulation · fictional money' : S.provider.id === 'mock' ? 'Sandbox · mock' : 'Plaid sandbox';
   if (S.simulation) $('#sandbox-banner').textContent = 'Simulation · fictional money. Everything runs and stays in this browser.';
-  ({ plan: wirePlan, accounts: wireAccounts, authorize: wireAuthorize, rollover: wireRollover, vault: wireVault, inbox: wireInbox, bot: wireBot, settings: wireSettings })[r]?.();
+  ({ plan: wirePlan, accounts: wireAccounts, authorize: wireAuthorize, rollover: wireRollover, vault: wireVault, inbox: wireInbox, bot: wireBot, settings: wireSettings, seal: wireSeal, setup: wireSetup, lostcard: wireLostCard, sync: wireSync })[r]?.();
 }
 
 function wireAccounts() {
@@ -857,10 +1286,32 @@ document.addEventListener('click', async (e) => {
   if (a === 'blind-off-open') openBlindOff();
   if (a === 'blind-add-stay') { if (confirm('Stay blind until the goal is reached? After this, Go Blind cannot be turned off at all until the vault unlocks, not even with the passcode.')) act(() => api('/api/blind/on', { confirm: true, stayUntilGoal: true }), 'Staying blind until the goal is reached.'); }
   if (a === 'simbot') { const r = await act(() => api('/api/demo/bot', { action: el.dataset.bot })); if (r) { simBotLast = r; render(); } }
-  if (a === 'demo-wipe') { if (confirm('Erase all demo data in this browser and start over?')) { await act(() => api('/api/demo/wipe', {}), 'Demo reset'); location.hash = '#/'; } }
+  if (a === 'copy') copyText(el.dataset.copy, el.dataset.secret === '1');
+  if (a === 'seal-start') { wipeSeal(); SEAL.mode = 'new'; render(); window.scrollTo(0, 0); }
+  if (a === 'seal-cancel') { if (SEAL.draft) await api('/api/sealed-logins/draft/discard', {}).catch(() => {}); wipeSeal(); await refresh(); }
+  if (a === 'seal-back') { SEAL.step = 1; SEAL.draft = null; SEAL.checks = {}; render(); window.scrollTo(0, 0); }
+  if (a === 'seal-reveal') { const r = await act(() => api('/api/sealed-logins/reveal', { id: el.dataset.id })); if (r) { REVEALED[el.dataset.id] = r.values; render(); } }
+  if (a === 'seal-reseal') { const r = S.sealedLogins.find((x) => x.id === el.dataset.id); wipeSeal(); Object.assign(SEAL, { mode: 'reseal', targetId: r.id, wasOpen: r.status === 'unlocked' }); SEAL.form.label = r.label; if (route() !== 'seal') location.hash = '#/seal'; else render(); window.scrollTo(0, 0); }
+  if (a === 'seal-delete') { if (confirm('Delete this sealed login? (Refused while it is still sealed.)')) act(() => api('/api/sealed-logins/delete', { id: el.dataset.id, confirm: true }), 'Sealed login deleted'); }
+  if (a === 'setup-lost-next') { SETUP_SKIP_LOST = true; render(); window.scrollTo(0, 0); }
+  if (a === 'setup-sample') { el.disabled = true; await act(loadSample, 'Sample data loaded: $100/month, day after SSI'); }
+  if (a === 'setup-authorize') {
+    const name = $('#setup-signer').value.trim();
+    if (!$('#setup-auth-box').checked) return toast('Tick the authorization box.', true);
+    await act(async () => { const t = await api('/api/authorization/text', { signerName: name }); return api('/api/authorization', { accepted: true, textHash: t.textHash, signerName: name }); }, 'Authorized. Deposits are on and the goal is locked.');
+  }
+  if (a === 'raise') { if (confirm('Raise your automatic deposit? You will sign a new authorization next. This button can only raise it.')) { const r = await act(() => api('/api/schedule/raise', { multiplier: Number(el.dataset.mult) }), 'Deposit raised. Sign the new authorization.'); if (r) location.hash = '#/authorize'; } }
+  if (a === 'cards-seen') await act(() => api('/api/cards/seen', {}));
+  if (a === 'move-sim') await act(() => api('/api/monthly-moves/complete', { id: el.dataset.id }), 'All three steps recorded (simulated)');
+  if (a === 'sync-create') { const c = `ldbsync1.${b64u(crypto.getRandomValues(new Uint8Array(16)))}.${b64u(crypto.getRandomValues(new Uint8Array(32)))}`; localStorage.setItem(SYNC_K.code, c); syncShowCode = true; render(); toast('Sync code created. Give it to your assistant once, like a password.'); }
+  if (a === 'sync-show') { syncShowCode = !syncShowCode; render(); }
+  if (a === 'sync-forget') { if (confirm('Forget the sync code on this device? Your assistant will no longer be able to read new snapshots.')) { localStorage.removeItem(SYNC_K.code); localStorage.removeItem(SYNC_K.last); syncShowCode = false; render(); } }
+  if (a === 'sync-now') { el.disabled = true; const r = await act(syncNow); if (r) toast(`Synced. ${r.applied} assistant request(s) applied${r.refused ? `, ${r.refused} refused` : ''}.`); el.disabled = false; }
+  if (a === 'sync-download') await act(downloadSnapshot, 'Encrypted snapshot downloaded');
+  if (a === 'demo-wipe') { if (confirm('Erase all demo data in this browser and start over?')) { const r = await act(() => api('/api/demo/wipe', {}), 'Demo reset'); if (r) Object.values(SYNC_K).forEach((k) => localStorage.removeItem(k)); location.hash = '#/'; } }
 });
 // Fresh state on every screen change, so requests the bot made in the meantime show up.
-window.addEventListener('hashchange', () => { if (route() !== 'vault') shownCode = null; if (route() !== 'bot') shownKey = null; refresh().catch(() => render()); });
+window.addEventListener('hashchange', () => { if (route() !== 'vault') shownCode = null; if (route() !== 'sync') syncShowCode = false; if (route() !== 'bot') shownKey = null; if (!['seal', 'setup'].includes(route())) wipeSeal(); else REVEALED = {}; refresh().catch(() => render()); });
 // Light poll for new bot requests: only updates the Inbox badge, never re-renders under your fingers.
 setInterval(async () => {
   if (document.hidden || !S) return;
