@@ -25,7 +25,7 @@ Prototype with fake data. No real money moves. General information, not financia
 
 - **Anyone with the sync code can read the snapshots.** It is saved in this browser's localStorage so you can sync again. Tap "Forget code" to remove it, and create a new code if it leaks.
 - The relay is part of the server prototype (`SYNC_RELAY=on`). **This project does not host one for you.** To use sync from the live GitHub Pages demo:
-  - **On the same computer as the browser (for testing):** start the relay with `SYNC_RELAY=on PORT=5190 SYNC_ALLOWED_ORIGINS=https://zigflames.com npm start`, then enter `http://127.0.0.1:5190` as the relay. The demo's CSP allows `http://127.0.0.1:*` and `http://localhost:*`.
+  - **On the same computer as the browser (for testing):** start the relay with `SYNC_RELAY=on PORT=5190 SYNC_ALLOWED_ORIGINS=https://zigflames.com npm start`, then enter `http://127.0.0.1:5190` as the relay. The demo's CSP allows `http://127.0.0.1:*` and `http://localhost:*`. Chrome asks for permission the first time ("allow this site to access devices on your local network"); allow it for zigflames.com.
   - **Hosted, so the phone can reach it:** run the same server on any HTTPS host you control with `SYNC_RELAY=on` and `SYNC_ALLOWED_ORIGINS=https://zigflames.com`. Then rebuild the demo with `LDB_SYNC_RELAY_ORIGINS=https://your-relay.example npm run build` (that adds the origin to the page's CSP) and redeploy. Free tiers exist on several platforms, but none was set up here: no accounts were created and nothing was paid for.
 - The demo relay has a per-IP rate limit and a 256 KB size cap. It has no accounts. The unguessable 128-bit channel id plus encryption is the protection.
 

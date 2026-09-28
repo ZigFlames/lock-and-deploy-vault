@@ -296,6 +296,9 @@ def main():
             b = p.chromium.launch(executable_path=CHROME, headless=True) if CHROME else p.chromium.launch(headless=True)
             ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True)
             ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=ORIGIN)
+            if ORIGIN.startswith("https://"):   # Chrome's Local Network Access: the live page talking to the relay on 127.0.0.1
+                try: ctx.grant_permissions(["local-network-access"], origin=ORIGIN)
+                except Exception: pass
             pg = ctx.new_page(); errors = []
             pg.on("pageerror", lambda e: errors.append(str(e)))
             pg.on("dialog", lambda d: d.accept())
